@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+
+# Data and results (too large / regenerable)
+data/
+outputs/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# Gradio
+.gradio/
+flagged/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

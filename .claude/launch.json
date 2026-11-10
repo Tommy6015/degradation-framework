@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gui",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "degfw", "gui", "--no-browser"],
+      "port": 7860
+    }
+  ]
+}

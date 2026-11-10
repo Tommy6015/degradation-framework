@@ -1,0 +1,28 @@
+[project]
+name = "degradation-fw"
+version = "0.1.0"
+description = "Image degradation framework (fog, lens dirt, water drops, ...) with a point-and-click GUI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+    "gradio>=4.0",
+]
+
+[project.scripts]
+degfw = "degradation_fw.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["degradation_fw"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

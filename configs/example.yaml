@@ -1,0 +1,8 @@
+# Example pipeline. Steps are applied top to bottom.
+# Run:  uv run degfw apply -c configs/example.yaml -i data/input -o outputs/example
+seed: 0
+steps:
+  - name: gaussian_noise
+    params:
+      sigma: 0.05
+      per_channel: true
