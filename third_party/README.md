@@ -25,5 +25,10 @@ UNet 检测实验（`unet_detection/`）和论文插图（`figs/`）没有引入
 - 支持任意图片尺寸（原版强制缩放到 960×960）：新增 `image_to_model_xy`、`render_mask`、`to_rgb`；水滴部分重写较多（`find_droplets`、`barrel_distortion` 等）。
 - 新增 `noise.py`：纯 Python 实现的 `pnoise2`，替代在 Windows 上难以安装的 C 扩展包 `noise`。移植自 `noise` 1.2.2 的 C 源码（© 2008 Casey Duncan，MIT 许可证）。
 - 新增 `reproduce_examples.py`：固定随机种子、批量处理的运行脚本，可作为参数参考。
+  之后加了 `--seed random`：每张图随机抽种子，实际用的种子写进 `seed.json` / `seeds.json`，可用 `--seed N` 复现。
+  又把写死的位置/大小改成命令行指定：`--opaque / --semi / --droplet X Y SIZE`，可重复多次，
+  同类污渍全部叠加在一张结果图上；去掉了 `--only`（给了哪种就跑哪种）；位置也记进 `seed.json`。
+  默认位置在脚本开头的 `DEFAULT_SPOTS`：只写 `--droplet` 不带数字用默认位置；一个都不写则三种都按默认跑。
+  原图副本 `input.png` 默认不再保存，需要时加 `--save-input`。
 
 注意：模型权重是在 GPU 上保存的，按原样只能在有 CUDA 的机器上加载。
