@@ -134,7 +134,7 @@ class OpaqueContaminationGenerator:
         
         # Initialize and load the model
         self.model = ShapeGeneratorModel().to(self.device)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.load_state_dict(torch.load(model_path))
         self.model.eval()  # Set the model to evaluation mode
 
 
@@ -310,7 +310,7 @@ class SemiContaminationGenerator:
         
         # Initialize and load the model
         self.model = ShapeGeneratorModel().to(self.device)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.load_state_dict(torch.load(model_path))
         self.model.eval()  # Set the model to evaluation mode
 
 
@@ -460,7 +460,7 @@ class DropletGenerator():
         
         # Initialize and load the model
         self.model = ShapeGeneratorModel().to(self.device)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.load_state_dict(torch.load(model_path))
         self.model.eval()  # Set the model to evaluation mode
 
         # Init Vars

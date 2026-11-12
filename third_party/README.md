@@ -25,4 +25,5 @@ UNet 检测实验（`unet_detection/`）和论文插图（`figs/`）没有引入
 - 支持任意图片尺寸（原版强制缩放到 960×960）：新增 `image_to_model_xy`、`render_mask`、`to_rgb`；水滴部分重写较多（`find_droplets`、`barrel_distortion` 等）。
 - 新增 `noise.py`：纯 Python 实现的 `pnoise2`，替代在 Windows 上难以安装的 C 扩展包 `noise`。移植自 `noise` 1.2.2 的 C 源码（© 2008 Casey Duncan，MIT 许可证）。
 - 新增 `reproduce_examples.py`：固定随机种子、批量处理的运行脚本，可作为参数参考。
-- `torch.load` 加 `map_location`，没有 GPU 时也能加载模型。
+
+注意：模型权重是在 GPU 上保存的，按原样只能在有 CUDA 的机器上加载。
