@@ -21,7 +21,7 @@ def register(cls: type[Degradation]) -> type[Degradation]:
 
 def _ensure_loaded() -> None:
     # Importing the package runs the @register decorators.
-    from . import degradations  # noqa: F401
+    from .. import degradations  # noqa: F401
 
 
 def get(name: str) -> Degradation:

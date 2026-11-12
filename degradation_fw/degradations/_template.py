@@ -1,30 +1,29 @@
 """TEMPLATE — copy this file to add a new degradation that wraps third_party code.
 
 Steps:
-  1. Copy to e.g. ``fog.py`` and rename the class / ``name``.
-  2. Fill in ``params`` (they become GUI controls automatically).
+  1. Copy into the right category folder, e.g. ``weather/fog.py``, and rename
+     the class / ``name``.
+  2. Fill in ``params`` (strength, type, ... — validated automatically).
   3. In ``apply``: convert the image to whatever the third-party code expects,
      call it, convert the result back to float32 RGB HxWx3 in [0, 1].
-  4. Add ``from . import fog`` in ``degradations/__init__.py``.
+  4. Add ``from .weather import fog`` in ``degradations/__init__.py``.
 
-This file is NOT imported, so it does not appear in the GUI.
+This file is NOT imported, so it is not registered.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from ..base import Degradation
-from ..params import Choice, Float, Int
-from ..registry import register
+from degradation_fw.core.base import Degradation
+from degradation_fw.core.params import Choice, Float, Int
+from degradation_fw.core.paths import use_third_party  # noqa: F401
+from degradation_fw.core.registry import register
 
-# Third-party code lives under <repo>/third_party/<name>/. Import it however
-# that project is laid out, for example:
+# Third-party code lives under <repo>/third_party/<name>/, for example:
 #
-#   import sys
-#   from pathlib import Path
-#   sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "third_party" / "fog_xxx"))
-#   from fog_xxx import add_fog
+#   use_third_party("fog_xxx")          # adds third_party/fog_xxx to sys.path
+#   from fog_model import add_fog       # import exactly as the original repo does
 
 
 @register

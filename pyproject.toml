@@ -8,8 +8,11 @@ dependencies = [
     "numpy>=1.24",
     "pillow>=10.0",
     "pyyaml>=6.0",
-    "gradio>=4.0",
 ]
+
+[project.optional-dependencies]
+# GUI is postponed until the core degradations work. Install with: uv sync --extra gui
+gui = ["gradio>=4.0"]
 
 [project.scripts]
 degfw = "degradation_fw.cli:main"

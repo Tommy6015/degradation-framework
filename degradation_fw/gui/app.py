@@ -10,10 +10,10 @@ from pathlib import Path
 import gradio as gr
 import numpy as np
 
-from .. import registry
-from ..io import to_float, to_uint8
-from ..params import Bool, Choice, Float, Int, Param
-from ..pipeline import Pipeline, Step
+from ..core import registry
+from ..core.io import to_float, to_uint8
+from ..core.params import Bool, Choice, Float, Int, Param
+from ..core.pipeline import Pipeline, Step
 
 
 def _make_control(key: str, spec: Param):

@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from . import registry
-from .pipeline import Pipeline
+from .core import registry
+from .core.pipeline import Pipeline
 
 
 def _cmd_list(args) -> None:
@@ -38,7 +38,10 @@ def _cmd_apply(args) -> None:
 
 
 def _cmd_gui(args) -> None:
-    from .gui.app import launch
+    try:
+        from .gui.app import launch
+    except ImportError:
+        raise SystemExit("GUI not installed. Run:  uv sync --extra gui") from None
     launch(server_name=args.host, server_port=args.port, inbrowser=not args.no_browser)
 
 

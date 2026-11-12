@@ -233,12 +233,16 @@ name = "degradation-fw"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "gradio" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pillow" },
     { name = "pyyaml" },
+]
+
+[package.optional-dependencies]
+gui = [
+    { name = "gradio" },
 ]
 
 [package.dev-dependencies]
@@ -248,11 +252,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "gradio", specifier = ">=4.0" },
+    { name = "gradio", marker = "extra == 'gui'", specifier = ">=4.0" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
+provides-extras = ["gui"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]

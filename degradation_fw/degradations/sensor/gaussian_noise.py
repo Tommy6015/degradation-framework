@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..base import Degradation
-from ..params import Bool, Float
-from ..registry import register
+from degradation_fw.core.base import Degradation
+from degradation_fw.core.params import Bool, Float
+from degradation_fw.core.registry import register
 
 
 @register

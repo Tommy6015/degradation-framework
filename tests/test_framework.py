@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from degradation_fw import Pipeline, Step, available, get
-from degradation_fw.io import load_image, save_image
+from degradation_fw.core.io import load_image, save_image
 
 
 @pytest.fixture
@@ -74,5 +74,6 @@ def test_run_folder_writes_images_and_metadata(tmp_path, image):
 
 
 def test_gui_builds():
+    pytest.importorskip("gradio")  # GUI is optional
     from degradation_fw.gui.app import build_app
     build_app()
