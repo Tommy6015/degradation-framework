@@ -8,13 +8,70 @@ import matplotlib.pyplot as plt
 import random
 
 from PIL import Image
+from scipy import ndimage
 from scipy.special import binom
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from noise import pnoise2 
+from noise import pnoise2
+
+
+# How the network output is mapped onto an image of any size
+# ----------------------------------------------------------
+# The training masks were square (defisheyed WoodScape images, centre-cropped to 966x966) and
+# resized to 64x64, so the network output has 1:1 geometry: a round droplet is round.
+# To keep shapes undistorted on a non-square image (H x W), the 64x64 output is scaled
+# uniformly to a square of side max(H, W) and the centre H x W part is cut out ("cover").
+# The user's x, y are positions in the image; image_to_model_xy converts them to positions in
+# that square, so every image position is reachable. size stays relative to the longer side,
+# as in training (size / max(shape)). For square images all of this is the identity.
+
+def image_to_model_xy(x, y, height, width):
+    """
+    Converts normalized image coordinates (x: column / width, y: row / height) to the
+    network's coordinates in the max(height, width) square that is centre-cropped to the image.
+    """
+    side = max(height, width)
+    x_model = 0.5 + (x - 0.5) * width / side
+    y_model = 0.5 + (y - 0.5) * height / side
+    return x_model, y_model
+
+
+def render_mask(mask, height, width, blur_kernel_size, blur_sigma, return_square=False):
+    """
+    Scales the 64x64 network output uniformly to a max(height, width) square, applies the
+    Gaussian blur, and returns the centre (height x width) crop. Blurring before cropping
+    avoids border artifacts where a shape continues beyond the image edge.
+
+    :param blur_kernel_size: Odd kernel size, as int or (k, k) tuple.
+    :param return_square: If True, return (crop, square, top, left): the uncropped square too,
+                          with the crop's offset in it (used to measure shapes cut by the image edge).
+    """
+    height, width = int(height), int(width)
+    side = max(height, width)
+    square = cv2.resize(mask, (side, side), interpolation=cv2.INTER_LINEAR)
+    if isinstance(blur_kernel_size, (int, np.integer)):
+        blur_kernel_size = (blur_kernel_size, blur_kernel_size)
+    square = cv2.GaussianBlur(square, tuple(blur_kernel_size), blur_sigma)
+    top, left = (side - height) // 2, (side - width) // 2
+    crop = square[top:top + height, left:left + width]
+    if return_square:
+        return crop, square, top, left
+    return crop
+
+
+def to_rgb(img_array):
+    """
+    Converts an image to 3 channels: grayscale (H, W) or (H, W, 1) is replicated, RGBA (H, W, 4)
+    drops its alpha channel. 3-channel images are returned unchanged.
+    """
+    if img_array.ndim == 2 or img_array.shape[2] == 1:
+        return cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+    if img_array.shape[2] == 4:
+        return cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
+    return img_array
 
 
 ######################################################################################################### Model
@@ -83,34 +140,35 @@ class OpaqueContaminationGenerator:
 
 
     # Update the generate_mask function to work with the new model
-    def generate_mask(self, x, y, size, blur_kernel_size, blur_sigma):
+    def generate_mask(self, x, y, size, blur_kernel_size, blur_sigma, height=960, width=960):
         """
         Generates a mask based on the input x, y, size values and applies Gaussian Blur.
-        
-        :param x: Normalized x-coordinate for mask generation.
-        :param y: Normalized y-coordinate for mask generation.
-        :param size: Normalized size of the mask.
+
+        :param x: Horizontal position in the image, 0..1 (column / width).
+        :param y: Vertical position in the image, 0..1 (row / height).
+        :param size: Size of the mask, relative to the longer image side.
         :param blur_kernel_size: The size of the Gaussian kernel. Must be odd (default is (15, 15)).
         :param blur_sigma: Standard deviation for Gaussian kernel. If 0, it is computed automatically.
-        :return: Tuple containing the original 64x64 mask and the resized 960x960 mask with blur applied.
+        :param height: Height of the output mask in pixels (default 960).
+        :param width: Width of the output mask in pixels (default 960).
+        :return: Tuple containing the original 64x64 mask and the resized (height x width) mask with blur applied.
         """
+        # x, y are positions in the image; convert them to the network's square coordinates
+        x_model, y_model = image_to_model_xy(x, y, height, width)
+
         # Convert the input into a tensor and move to the correct device (GPU/CPU)
-        input_tensor = torch.tensor([[x, y, size]], dtype=torch.float32).to(self.device)
-        
+        input_tensor = torch.tensor([[x_model, y_model, size]], dtype=torch.float32).to(self.device)
+
         # Generate the mask with the new model
         with torch.no_grad():
             output_mask = self.model(input_tensor)
-        
+
         # Remove batch and channel dimensions
         output_mask = output_mask[0, 0].cpu().numpy()  # Convert to numpy array (64x64)
-        
-        # Resize the mask to 960x960 using PyTorch's interpolate function
-        resized_mask = F.interpolate(torch.tensor(output_mask).unsqueeze(0).unsqueeze(0), size=(960, 960), mode='bilinear', align_corners=False)
-        resized_mask = resized_mask.squeeze(0).squeeze(0).numpy()  # Convert back to numpy array
-        
-        # Apply Gaussian Blur to the resized mask
-        blurred_mask = cv2.GaussianBlur(resized_mask, blur_kernel_size, blur_sigma)
-        
+
+        # Scale uniformly to a max(height, width) square, blur, and centre-crop to the image size
+        blurred_mask = render_mask(output_mask, height, width, blur_kernel_size, blur_sigma)
+
         return output_mask, blurred_mask
 
 
@@ -121,27 +179,24 @@ class OpaqueContaminationGenerator:
         """
         Applies the generated mask to the given image array, with an option to specify the mask color.
 
-        :param img_array: Input image array (960x960 or any size, will be resized)
-        :param x: Normalized x-coordinate for mask generation
-        :param y: Normalized y-coordinate for mask generation
-        :param size: Normalized size of the mask
+        :param img_array: Input image array of any size (the output has the same size)
+        :param x: Horizontal position in the image, 0..1 (column / width)
+        :param y: Vertical position in the image, 0..1 (row / height)
+        :param size: Size of the mask, relative to the longer image side
         :param mask_color: Color of the mask (default is black). Should be a tuple (R, G, B).
         :param blur_kernel_size: The size of the Gaussian kernel. Must be odd (default is (15, 15)).
         :param blur_sigma: Standard deviation for Gaussian kernel. If 0, it is computed automatically.
         :return: Contaminated image with the mask applied
         """
-        # Generate the mask
-        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma)
-        
-        # Ensure the input image is also 960x960 for applying the mask
-        img_resized = cv2.resize(img_array, (960, 960), interpolation=cv2.INTER_LINEAR)
-        
+        # Keep the input's own size; grayscale images are converted to 3-channel RGB
+        img_resized = to_rgb(img_array)
+        height, width = img_resized.shape[:2]
+
+        # Generate the mask at the image size
+        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma, height, width)
+
         # Normalize mask to range [0, 1]
         resized_mask_normalized = resized_mask.astype(np.float32)
-
-        # If the input image is grayscale, convert it to 3-channel RGB
-        if len(img_resized.shape) == 2 or img_resized.shape[2] == 1:
-            img_resized = cv2.cvtColor(img_resized, cv2.COLOR_GRAY2RGB)
 
         # Create a mask color array, matching the shape of the image
         mask_color_array = np.ones_like(img_resized, dtype=np.float32)
@@ -161,29 +216,26 @@ class OpaqueContaminationGenerator:
         """
             Applies the generated mask to the given image array using a gradient between two RGB colors.
         
-        :param img_array: Input image array (960x960 or any size, will be resized)
-        :param x: Normalized x-coordinate for mask generation
-        :param y: Normalized y-coordinate for mask generation
-        :param size: Normalized size of the mask
+        :param img_array: Input image array of any size (the output has the same size)
+        :param x: Horizontal position in the image, 0..1 (column / width)
+        :param y: Vertical position in the image, 0..1 (row / height)
+        :param size: Size of the mask, relative to the longer image side
         :param color_start: Start color for the mask gradient (RGB tuple)
         :param color_end: End color for the mask gradient (RGB tuple)
         :param blur_kernel_size: The size of the Gaussian kernel. Must be odd (default is (15, 15)).
         :param blur_sigma: Standard deviation for Gaussian kernel. If 0, it is computed automatically.
         :return: Contaminated image with the gradient mask applied
         """
-        # Generate the mask
-        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma)
-        
-        # Ensure the input image is 960x960
-        img_resized = cv2.resize(img_array, (960, 960), interpolation=cv2.INTER_LINEAR)
-        
+        # Keep the input's own size; grayscale images are converted to 3-channel RGB
+        img_resized = to_rgb(img_array)
+        height, width = img_resized.shape[:2]
+
+        # Generate the mask at the image size
+        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma, height, width)
+
         # Normalize mask to range [0, 1]
         resized_mask_normalized = resized_mask.astype(np.float32)
-        
-        # If the input image is grayscale, convert it to 3-channel RGB
-        if len(img_resized.shape) == 2 or img_resized.shape[2] == 1:
-            img_resized = cv2.cvtColor(img_resized, cv2.COLOR_GRAY2RGB)
-        
+
         # Create a mask color array using linear interpolation between color_start and color_end
         mask_color_array = np.zeros_like(img_resized, dtype=np.float32)
         
@@ -206,10 +258,10 @@ class OpaqueContaminationGenerator:
         Applies the generated mask to the given image array using a gradient between two RGB colors, 
         with a non-linear adjustment to bias towards the first color.
         
-        :param img_array: Input image array (960x960 or any size, will be resized)
-        :param x: Normalized x-coordinate for mask generation
-        :param y: Normalized y-coordinate for mask generation
-        :param size: Normalized size of the mask
+        :param img_array: Input image array of any size (the output has the same size)
+        :param x: Horizontal position in the image, 0..1 (column / width)
+        :param y: Vertical position in the image, 0..1 (row / height)
+        :param size: Size of the mask, relative to the longer image side
         :param color_start: Start color for the mask gradient (RGB tuple)
         :param color_end: End color for the mask gradient (RGB tuple)
         :param blur_kernel_size: The size of the Gaussian kernel. Must be odd (default is (15, 15)).
@@ -218,22 +270,19 @@ class OpaqueContaminationGenerator:
                     Values < 1 bias towards the first color, values > 1 bias towards the second color.
         :return: Contaminated image with the gradient mask applied
         """
-        # Generate the mask
-        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma)
-        
-        # Ensure the input image is 960x960
-        img_resized = cv2.resize(img_array, (960, 960), interpolation=cv2.INTER_LINEAR)
-        
+        # Keep the input's own size; grayscale images are converted to 3-channel RGB
+        img_resized = to_rgb(img_array)
+        height, width = img_resized.shape[:2]
+
+        # Generate the mask at the image size
+        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma, height, width)
+
         # Normalize mask to range [0, 1]
         resized_mask_normalized = resized_mask.astype(np.float32)
-        
+
         # Apply non-linear transformation to bias towards color_start
         color_weights = resized_mask_normalized ** gamma
-        
-        # If the input image is grayscale, convert it to 3-channel RGB
-        if len(img_resized.shape) == 2 or img_resized.shape[2] == 1:
-            img_resized = cv2.cvtColor(img_resized, cv2.COLOR_GRAY2RGB)
-        
+
         # Create a mask color array using linear interpolation between color_start and color_end
         mask_color_array = np.zeros_like(img_resized, dtype=np.float32)
         
@@ -286,19 +335,24 @@ class SemiContaminationGenerator:
     
 
 
-    def generate_mask(self, x, y, size, blur_kernel_size=(15, 15), blur_sigma=0):
+    def generate_mask(self, x, y, size, blur_kernel_size=(15, 15), blur_sigma=0, height=960, width=960):
         """
         Generates a mask based on the input x, y, size values and applies Gaussian Blur.
-        
-        :param x: Normalized x-coordinate for mask generation.
-        :param y: Normalized y-coordinate for mask generation.
-        :param size: Normalized size of the mask.
+
+        :param x: Horizontal position in the image, 0..1 (column / width).
+        :param y: Vertical position in the image, 0..1 (row / height).
+        :param size: Size of the mask, relative to the longer image side.
         :param blur_kernel_size: The size of the Gaussian kernel. Must be odd (default is (15, 15)).
         :param blur_sigma: Standard deviation for Gaussian kernel. If 0, it is computed automatically.
-        :return: Tuple containing the original 64x64 mask and the resized 960x960 mask with blur applied.
+        :param height: Height of the output mask in pixels (default 960).
+        :param width: Width of the output mask in pixels (default 960).
+        :return: Tuple containing the original 64x64 mask and the resized (height x width) mask with blur applied.
         """
+        # x, y are positions in the image; convert them to the network's square coordinates
+        x_model, y_model = image_to_model_xy(x, y, height, width)
+
         # Convert the input into a tensor and move to the correct device (GPU/CPU)
-        input_tensor = torch.tensor([[x, y, size]], dtype=torch.float32).to(self.device)
+        input_tensor = torch.tensor([[x_model, y_model, size]], dtype=torch.float32).to(self.device)
         
         # Generate the mask
         with torch.no_grad():
@@ -307,14 +361,11 @@ class SemiContaminationGenerator:
         # Remove batch and channel dimensions
         output_mask = output_mask[0, 0].cpu().numpy()  # Convert to numpy array (64x64)
         
-        # Resize the mask to 960x960 using OpenCV's resize
-        resized_mask = cv2.resize(output_mask, (960, 960), interpolation=cv2.INTER_LINEAR)
-        
-        # Apply Gaussian Blur to the resized mask
-        blurred_mask = cv2.GaussianBlur(resized_mask, blur_kernel_size, blur_sigma)
-        
+        # Scale uniformly to a max(height, width) square, blur, and centre-crop to the image size
+        blurred_mask = render_mask(output_mask, height, width, blur_kernel_size, blur_sigma)
+
         return output_mask, blurred_mask
-    
+
 
     ### Not in Operation
     # Goal was to shift the vaues and control the strength
@@ -342,35 +393,31 @@ class SemiContaminationGenerator:
         """
         Applies the generated mask to the given image array, embedding a Perlin noise texture in the mask with a specified color.
 
-        :param img_array: Input image array (960x960 or any size, will be resized)
-        :param x: Normalized x-coordinate for mask generation
-        :param y: Normalized y-coordinate for mask generation
-        :param size: Normalized size of the mask
+        :param img_array: Input image array of any size (the output has the same size)
+        :param x: Horizontal position in the image, 0..1 (column / width)
+        :param y: Vertical position in the image, 0..1 (row / height)
+        :param size: Size of the mask, relative to the longer image side
         :param mask_color: Color of the mask, specified as an (R, G, B) tuple (default is gray: (128, 128, 128)).
         :param noise_scale: Scale of the Perlin noise (affects detail level of the noise)
         :param blur_kernel_size: The size of the Gaussian kernel. Must be odd (default is (15, 15)).
         :param blur_sigma: Standard deviation for Gaussian kernel. If 0, it is computed automatically.
         :return: Contaminated image with the Perlin noise mask applied
         """
-        # Generate the mask
-        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma)
+        # Keep the input's own size; grayscale images are converted to 3-channel RGB
+        img_resized = to_rgb(img_array)
+        height, width = img_resized.shape[:2]
 
-        # Generate Perlin noise texture for the mask
-        perlin_noise = self.generate_perlin_noise(960, 960, scale=noise_scale)
-        
-        # Ensure the input image is also 960x960 for applying the mask
-        img_resized = cv2.resize(img_array, (960, 960), interpolation=cv2.INTER_LINEAR)
-        
+        # Generate the mask at the image size
+        _, resized_mask = self.generate_mask(x, y, size, blur_kernel_size, blur_sigma, height, width)
+
+        # Generate Perlin noise texture for the mask (same size as the image)
+        perlin_noise = self.generate_perlin_noise(width, height, scale=noise_scale)
+
         # Normalize mask to range [0, 1]
         resized_mask_normalized = resized_mask.astype(np.float32)
-        
+
         # Apply Perlin noise to the mask (blending with Perlin noise)
         noise_mask = resized_mask_normalized * perlin_noise
-
-
-        # If the input image is grayscale, convert it to 3-channel RGB
-        if len(img_resized.shape) == 2 or img_resized.shape[2] == 1:
-            img_resized = cv2.cvtColor(img_resized, cv2.COLOR_GRAY2RGB)
 
         # Create a mask color array, matching the shape of the image, and apply the specified mask color
         mask_color_array = np.ones_like(img_resized, dtype=np.float32)
@@ -398,7 +445,14 @@ class SemiContaminationGenerator:
 
 ######################################################################################################### DROPLET
 class DropletGenerator():
-    def __init__(self, img_width, img_height, num_channels, model_path):
+    def __init__(self, img_width=None, img_height=None, num_channels=3, model_path=None):
+        """
+        :param img_width, img_height, num_channels: Optional. Kept for backward compatibility only;
+            simulate_droplet now takes the size from each input image, so images of any size work.
+        :param model_path: Path to the trained droplet shape model (.pth).
+        """
+        if model_path is None:
+            raise ValueError("model_path is required, e.g. DropletGenerator(model_path='gen_models/best_model_droplet.pth')")
 
         # Check if a GPU is available and set the device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -413,22 +467,33 @@ class DropletGenerator():
         self.img_width = img_width
         self.img_height = img_height
         self.num_channels = num_channels
+        self.last_droplets = []  # filled by simulate_droplet: one dict per droplet (see find_droplets)
 
 
 
-    def generate_mask(self, x, y, size, blur_kernel_size, blur_sigma):
+    def generate_mask(self, x, y, size, blur_kernel_size, blur_sigma, height=None, width=None, return_square=False):
         """
         Generates a mask based on the input x, y, size values and applies Gaussian Blur.
-        
-        :param x: Normalized x-coordinate for mask generation.
-        :param y: Normalized y-coordinate for mask generation.
-        :param size: Normalized size of the mask.
+
+        :param x: Horizontal position in the image, 0..1 (column / width).
+        :param y: Vertical position in the image, 0..1 (row / height).
+        :param size: Size of the mask, relative to the longer image side.
         :param blur_kernel_size: The size of the Gaussian kernel. Must be odd (default is (15, 15)).
         :param blur_sigma: Standard deviation for Gaussian kernel. If 0, it is computed automatically.
-        :return: Tuple containing the original 64x64 mask and the resized 960x960 mask with blur applied.
+        :param height: Height of the output mask in pixels (default: img_height given to the constructor).
+        :param width: Width of the output mask in pixels (default: img_width given to the constructor).
+        :param return_square: If True, return (mask, square, top, left) like render_mask.
+        :return: The resized (height x width) mask with blur applied.
         """
+        height = self.img_height if height is None else height
+        width = self.img_width if width is None else width
+        if height is None or width is None:
+            raise ValueError("Give height and width, or img_width and img_height to the constructor.")
+        # x, y are positions in the image; convert them to the network's square coordinates
+        x_model, y_model = image_to_model_xy(x, y, height, width)
+
         # Convert the input into a tensor and move to the correct device (GPU/CPU)
-        input_tensor = torch.tensor([[x, y, size]], dtype=torch.float32).to(self.device)
+        input_tensor = torch.tensor([[x_model, y_model, size]], dtype=torch.float32).to(self.device)
         
         # Generate the mask
         with torch.no_grad():
@@ -437,13 +502,8 @@ class DropletGenerator():
         # Remove batch and channel dimensions
         output_mask = output_mask[0, 0].cpu().numpy()  # Convert to numpy array (64x64)
         
-        # Resize the mask to 960x960 using OpenCV's resize
-        resized_mask = cv2.resize(output_mask, (self.img_width, self.img_height), interpolation=cv2.INTER_LINEAR)
-        
-        # Apply Gaussian Blur to the resized mask
-        blurred_mask = cv2.GaussianBlur(resized_mask, (blur_kernel_size, blur_kernel_size), blur_sigma)
-        
-        return blurred_mask
+        # Scale uniformly to a max(height, width) square, blur, and centre-crop to the image size
+        return render_mask(output_mask, height, width, blur_kernel_size, blur_sigma, return_square)
     
 
 
@@ -605,21 +665,24 @@ class DropletGenerator():
         return xmin, xmax, ymin, ymax
 
 
-    def barrel_distortion(self, img, strength):
+    def barrel_distortion(self, img, strength, source=None, offset=(0, 0), return_valid=False):
         """
-        Transform a given img with Barrel Transforation
-
-        Detailed description of the function explaining what it does.
+        Transform a given img with Barrel Transforation around a random center:
+        output pixel at radius r samples the input at radius r + strength * r**3.
 
         Input:
-        img as np.array
+        img as np.array (the region to distort)
 
         Parameters:
-        center (list with two ints (Int, Int)): Center of the Transformation
-        strength (Double): Strength of the transformation
+        strength (Double): Strength of the transformation (in 1/px^2)
+        source (np.array, optional): Image to sample from instead of img, e.g. the full image that img
+            was cut from. Samples outside img then show the real surrounding scene instead of black;
+            only samples outside source itself repeat its border pixels.
+        offset ((int, int)): (column, row) position of img inside source.
+        return_valid (bool): Also return a boolean mask of the output pixels whose sample lies inside img.
 
         Returns:
-        transformed img as np array
+        transformed img as np array (and the validity mask if return_valid)
         """
 
         # Init
@@ -627,8 +690,9 @@ class DropletGenerator():
         x, y = np.meshgrid(np.arange(width), np.arange(height))
 
 
-        center_x = random.randint(10, width)
-        center_y = random.randint(10, height)
+        # min(10, ...) keeps the original range for regions of 10 px or more and avoids an empty range for tiny ones
+        center_x = random.randint(min(10, width), width)
+        center_y = random.randint(min(10, height), height)
 
         center = (center_x, center_y)
 
@@ -647,8 +711,17 @@ class DropletGenerator():
         x_distorted = r_distorted * np.cos(theta) + center[0]
         y_distorted = r_distorted * np.sin(theta) + center[1]
 
+        # Samples that fall inside img (outside, the old code got black pixels from cv2.remap's constant border)
+        valid = (x_distorted >= 0) & (x_distorted <= width - 1) & (y_distorted >= 0) & (y_distorted <= height - 1)
+
         # Interpolation of the disorted image
-        distorted_img = cv2.remap(img, x_distorted.astype(np.float32), y_distorted.astype(np.float32), interpolation=cv2.INTER_LINEAR)
+        if source is None:
+            distorted_img = cv2.remap(img, x_distorted.astype(np.float32), y_distorted.astype(np.float32), interpolation=cv2.INTER_LINEAR)
+        else:
+            distorted_img = cv2.remap(source, (x_distorted + offset[0]).astype(np.float32), (y_distorted + offset[1]).astype(np.float32),
+                                      interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        if return_valid:
+            return distorted_img, valid
         return distorted_img
 
 
@@ -746,11 +819,12 @@ class DropletGenerator():
         ib_gauss_kernel (int, optional): The kernel size for the Gaussian blur applied to the blended image.
         blurr_roi_gauss_kernel (int, optional): The kernel size for the Gaussian blur applied to the region of interest (ROI).
         mask_blurr_gauss_kernel (int, optional): The kernel size for the Gaussian blur applied to the mask.
-        mood (str, optional): The background color mode ('black' or 'white') for the distorted region. Default is 'black'.
+        mood (str, optional): 'white' fills the part of the distorted region whose samples lie outside the ROI
+            with white; any other value (default 'black') shows the real surrounding scene there.
         test (bool, optional): If True, intermediate steps are visualized for debugging.
 
         Returns:
-        tuple: A tuple containing the fused image (ndarray) and the ground truth mask (ndarray).
+        ndarray: The fused image. If mask is None, image_b (the processed image before blending) instead.
         """
 
         ##### Step 1: Barrel Transformation
@@ -784,8 +858,11 @@ class DropletGenerator():
             plt.show()
         ############################# TEST #############################
 
-        # Do the transformation
-        distorted_roi = self.barrel_distortion(pre_roi, barrel_strength)
+        # Do the transformation. Samples are taken from the full image, so pixels whose sample lies
+        # outside the ROI show the real surrounding scene. (cv2.remap used to fill them with black,
+        # and the black corners left in the crop below became dark spots inside the droplet.)
+        distorted_roi, valid = self.barrel_distortion(pre_roi, barrel_strength, source=raw_img,
+                                                      offset=(sq_min_y, sq_min_x), return_valid=True)
         ############################# TEST #############################
         if test:
             plt.imshow(distorted_roi)
@@ -798,22 +875,21 @@ class DropletGenerator():
 
 
         ##### Step 2: Background
-        # Give that roi a white background
-        # Assumption: Droplet is lighter than the raw_image because of lens effect
+        # mood='white': the part sampled outside the ROI becomes white
+        # (assumption: droplet is lighter than the raw_image because of lens effect).
+        # Any other mood keeps the real surrounding scene there.
         if mood == 'white':
-            white_background = self.create_white_background(distorted_roi.shape[0], distorted_roi.shape[1])
+            distorted_roi[~valid] = 255
 
-            # Get it all together
-            distorted_roi[np.all(distorted_roi == [0, 0, 0], axis=-1)] = white_background[np.all(distorted_roi == [0, 0, 0], axis=-1)]
-            prexmin, prexmax, preymin, preymax = self.sq_calc_bounds_white(distorted_roi)
+        # Crop to the bounding box of the part sampled inside the ROI; this sets the ZoomIn magnification.
+        # Validity comes from the sample coordinates, not from pixel colour, so black scene content is kept.
+        valid_rows, valid_cols = np.any(valid, axis=1), np.any(valid, axis=0)
+        if valid_rows.any():
+            prexmin, prexmax = int(np.argmax(valid_rows)), len(valid_rows) - int(np.argmax(valid_rows[::-1]))
+            preymin, preymax = int(np.argmax(valid_cols)), len(valid_cols) - int(np.argmax(valid_cols[::-1]))
             prepre_roi = distorted_roi[prexmin:prexmax, preymin:preymax]
         else:
-            background = distorted_roi
-
-            # Get it all together
-            distorted_roi[np.all(distorted_roi == [0, 0, 0], axis=-1)] = background[np.all(distorted_roi == [0, 0, 0], axis=-1)]
-            prexmin, prexmax, preymin, preymax = self.sq_calc_bounds_black(distorted_roi)
-            prepre_roi = distorted_roi[prexmin:prexmax, preymin:preymax]
+            prepre_roi = distorted_roi[:0, :0]  # nothing sampled inside the ROI: handled below
 
         if test:
             ############################# TEST #############################
@@ -885,6 +961,8 @@ class DropletGenerator():
 
 
         ###### Step 8: Generate
+        if mask is None:  # caller blends itself (simulate_droplet, one image_b per droplet)
+            return image_b
         fused_image=(mask*image_b[:,:,:]) + ((1-mask)*raw_img[:,:,:])
         #TIMfused_image = (mask*image_b[:,:,:]) + ((1-mask)*raw_img[:,:,:])
         fused_image = fused_image.astype(np.uint8)
@@ -929,7 +1007,7 @@ class DropletGenerator():
         test (bool, optional): If True, intermediate steps are visualized for debugging.
 
         Returns:
-        tuple: A tuple containing the fused image (ndarray) and the ground truth mask (ndarray).
+        ndarray: The fused image. If mask is None, image_b (the processed image before blending) instead.
         """
 
         ##### Step 1: Extract Region of Interest (ROI)
@@ -958,7 +1036,7 @@ class DropletGenerator():
 
 
         ##### Step 3: Resize it to a smaller version
-        miniaturized_roi = cv2.resize(rotated_roi, ((sq_max_y-sq_min_y) // 2, (sq_max_x-sq_min_x) // 2))
+        miniaturized_roi = cv2.resize(rotated_roi, (max(1, (sq_max_y-sq_min_y) // 2), max(1, (sq_max_x-sq_min_x) // 2)))
         ############################# TEST #############################
         if test:
             print("Miniaturized ROI:")
@@ -1007,6 +1085,8 @@ class DropletGenerator():
 
 
         ###### Step 7: Generate the final image by blending with the original using the mask
+        if mask is None:  # caller blends itself (simulate_droplet, one image_b per droplet)
+            return image_b
         fused_image=(mask*image_b[:,:,:]) + ((1-mask)*raw_img[:,:,:])
         #fused_image = fused_image.astype(np.uint32)
         fused_image = fused_image.astype(np.uint8)
@@ -1033,103 +1113,141 @@ class DropletGenerator():
                             mood='black',
                             mask_threshold=0.5,
                             test=False):
+        """
+        Simulates a water droplet on raw_img (any size; grayscale/RGBA are converted to RGB).
 
-        # Create Mask with Model
-        mask = self.generate_mask(x, y, size, mask_blurr_gauss_kernel, blur_sigma)
+        The network mask can contain several separate droplets. Each one is classified on its own
+        (see find_droplets) and rendered as ZoomIn or ZoomOut inside its own bounding box; the results
+        are blended with the original image using the soft mask. Details of the last call are in
+        self.last_droplets.
 
+        :param f_C: Camera focal length in px (for the resolution of raw_img). A droplet is rendered as
+                    ZoomIn if its focal length f_D > f_C, otherwise as ZoomOut.
+        :param mask_threshold: Mask value in [0, 1] from which a pixel counts as droplet when splitting
+                    the mask into droplets and measuring them. The blending itself still uses the soft mask.
+        :return: (fused_image, gt_mask) with gt_mask the soft network mask scaled to 0-255 (uint8).
+        """
+        # The image may have any size: take it from the input image (grayscale is converted to 3-channel RGB)
+        raw_img = to_rgb(raw_img)
+        img_height, img_width = raw_img.shape[:2]
+        self.img_height, self.img_width = img_height, img_width  # also used by set_position_form
 
+        # Create Mask with Model at the image size; the uncropped square is kept to measure droplets
+        # that are cut by the image edge
+        mask, mask_square, top, left = self.generate_mask(x, y, size, mask_blurr_gauss_kernel, blur_sigma,
+                                                          img_height, img_width, return_square=True)
 
+        # Ground truth: the soft mask as uint8; the blending mask is blurred once more
+        gt_mask = np.uint8(mask * 255)
+        mask = cv2.GaussianBlur(gt_mask, (mask_blurr_gauss_kernel, mask_blurr_gauss_kernel), 0)
+        ############################# TEST #############################
+        if test:
+                print("GT-Mask:")
+                plt.imshow(gt_mask)
+                plt.axis('off')
+                plt.colorbar()
+                plt.show()
+                print("Mask:")
+                plt.imshow(mask)
+                plt.axis('off')
+                plt.colorbar()
+                plt.show()
+        ############################# TEST #############################
 
-        if raw_img.shape[0] != self.img_width or raw_img.shape[1] != self.img_height:
-            raise ValueError("Given shapes are not matching!")
-        else:
-            # Safe ground Truth
-            #mask = np.where(mask >= mask_threshold, 1, 0)
-            # Convert mask to uint8
-            gt_mask = np.uint8(mask.copy() * 255)  # Convert binary mask to 0-255 scale
-            mask = cv2.GaussianBlur(gt_mask, (mask_blurr_gauss_kernel, mask_blurr_gauss_kernel), 0)  # Adjust kernel size (15, 15) as needed
-            ############################# TEST #############################
-            if test:
-                    print("GT-Mask:")
-                    plt.imshow(gt_mask)
-                    plt.axis('off')
-                    plt.colorbar()
-                    plt.show()
-                    print("Mask:")
-                    plt.imshow(mask)
-                    plt.axis('off')
-                    plt.colorbar()
-                    plt.show()
-            ############################# TEST #############################
-            
-            
-            # Check if Droplet is to small or noise
-            indices = np.where(gt_mask > 0)
-            if indices[0].size > 0:
-                # indices[0] --> x_coordinates # indices[1] --> y_coordinates
-                # Sq Square Data Properties
-                sq_min_x = np.min(indices[0])
-                sq_min_y = np.min(indices[1])
-                sq_max_x = np.max(indices[0])
-                sq_max_y = np.max(indices[1])
-                sq_width = sq_max_x - sq_min_x
-                sq_height = sq_max_y - sq_min_y
+        # Split the mask into separate droplets; each one is classified on its own
+        droplets, labels = self.find_droplets(mask_square, top, left, img_height, img_width, mask_threshold, f_C)
+        self.last_droplets = droplets  # for inspection: bbox, size, f_D and case of every droplet
+        if not droplets:
+            return raw_img.copy(), np.zeros(raw_img.shape[:2], dtype=np.uint8)
+        ############################# TEST #############################
+        if test:
+            print("Droplets (labels):")
+            plt.imshow(labels)
+            plt.axis('off')
+            plt.show()
+        ############################# TEST #############################
 
-                # Create approximated square mask
-                sq_mask = np.ones(raw_img.shape[:2], dtype=np.uint8)
-                sq_mask[sq_min_x:sq_max_x, sq_min_y:sq_max_y] = 255
+        # Reshape mask to have the same number of dimensions as the RGB images
+        mask = mask[:, :, np.newaxis]
+        mask = mask / np.max(mask)      # Normalize Mask from [0,255] to [0,1]
 
-                # Reshape mask to have the same number of dimensions as the RGB images
-                mask = mask[:, :, np.newaxis]
-                mask = mask / np.max(mask)      # Normalize Mask from [0,255] to [0,1]
-                ############################# TEST #############################
-                if test:
-                    print("SQ-Mask:")
-                    plt.imshow(sq_mask)
-                    plt.axis('off')
-                    plt.show()
-                ############################# TEST #############################
+        # With several droplets, every pixel (also the faint mask tail between droplets)
+        # takes its content from the nearest droplet
+        if len(droplets) > 1:
+            _, (near_r, near_c) = ndimage.distance_transform_edt(labels == 0, return_indices=True)
+            owner = labels[near_r, near_c]
+            image_b = np.empty_like(raw_img)
 
-
-
-            
-
-
-
-
-
-                # OM Classifier
-                ####################################################################################################################
-                f_D = (0.5*max(sq_max_x,sq_max_y)) / (1.33-1)
-
-                if f_D > f_C:
-                    ### ZoomIn
-                    fused_image = self.deploy_zoomin(mask, sq_min_x, sq_max_x, sq_min_y, sq_max_y, sq_width, sq_height,
-                                    raw_img, 
-                                    b_strength,
-                                    ib_gauss_kernel,
-                                    blurr_roi_gauss_kernel,
-                                    mood, test)
-                    print("Case: ZoomIn")
-                else:
-                    ### ZoomOut
-                    fused_image = self.deploy_zoomout(mask, sq_min_x, sq_max_x, sq_min_y, sq_max_y, sq_width, sq_height,
-                                    raw_img, 
-                                    b_strength,
-                                    ib_gauss_kernel,
-                                    blurr_roi_gauss_kernel,
-                                    mood, test)
-                    print("Case: ZoomOut")
-            
-
-            ####################################################################################################################
+        # OM Classifier: render every droplet as ZoomIn or ZoomOut (see find_droplets)
+        ####################################################################################################################
+        for i, d in enumerate(droplets, start=1):
+            sq_min_x, sq_max_x, sq_min_y, sq_max_y = d['bbox']
+            deploy = self.deploy_zoomin if d['case'] == 'ZoomIn' else self.deploy_zoomout
+            droplet_b = deploy(None, sq_min_x, sq_max_x, sq_min_y, sq_max_y, sq_max_x - sq_min_x, sq_max_y - sq_min_y,
+                               raw_img,
+                               b_strength,
+                               ib_gauss_kernel,
+                               blurr_roi_gauss_kernel,
+                               mood, test)
+            if len(droplets) == 1:
+                image_b = droplet_b
             else:
-                fused_image = raw_img.copy()
-                gt_mask = np.zeros((raw_img.shape[:2] ), dtype=np.uint8)
+                own = owner == d['label']
+                image_b[own] = droplet_b[own]
+            print(f"Droplet {i}/{len(droplets)}: {d['size_px']} px{' (cut by image edge)' if d['cut'] else ''}, "
+                  f"f_D = {d['f_D']:.0f} -> {d['case']}")
 
-            print(type(fused_image))
+        # Blend with the original image using the soft mask
+        fused_image = (mask*image_b[:,:,:]) + ((1-mask)*raw_img[:,:,:])
+        fused_image = fused_image.astype(np.uint8)
+        ############################# TEST #############################
+        if test:
+            print("End of Simulation:")
+            plt.imshow(fused_image)
+            plt.axis('off')
+            plt.show()
+        ############################# TEST #############################
 
-            return fused_image, gt_mask
+        return fused_image, gt_mask
+
+
+    def find_droplets(self, mask_square, top, left, height, width, mask_threshold, f_C):
+        """
+        Splits the droplet mask into separate droplets (8-connected regions with mask >= mask_threshold)
+        and decides ZoomIn / ZoomOut for each of them.
+
+        Droplet focal length f_D = R / (n - 1), n = 1.33 (water), with the droplet radius R approximated by
+        half of the droplet's longer bounding-box side in px. The size is measured on the uncropped square
+        mask, so a droplet cut by the image edge is judged by its full size. ZoomIn if f_D > f_C, i.e.
+        ZoomOut if the longer side is below 2 * (1.33 - 1) * f_C = 0.66 * f_C.
+
+        :param mask_square: Uncropped square mask from render_mask(..., return_square=True).
+        :param top, left: Offset of the image crop in the square.
+        :param f_C: Camera focal length in px for this image resolution.
+        :return: (droplets, labels): a list of dicts (label, bbox = (row0, row1, col0, col1) with exclusive ends,
+                 size_px, cut, f_D, case) for every droplet visible in the image, and the label image (height x width).
+        """
+        binary = (np.uint8(mask_square * 255) >= mask_threshold * 255).astype(np.uint8)
+        _, labels_square, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        labels = labels_square[top:top + height, left:left + width]
+
+        droplets = []
+        for label, region in enumerate(ndimage.find_objects(labels), start=1):
+            if region is None:  # droplet lies completely outside the image
+                continue
+            sx, sy, sw, sh = stats[label, :4]  # full extent in the square: x, y, width, height
+            size_px = int(max(sw, sh))
+            cut = sx < left or sy < top or sx + sw > left + width or sy + sh > top + height
+            f_D = (0.5 * size_px) / (1.33 - 1)
+            droplets.append({
+                'label': label,
+                'bbox': (region[0].start, region[0].stop, region[1].start, region[1].stop),
+                'size_px': size_px,
+                'cut': bool(cut),
+                'f_D': f_D,
+                'case': 'ZoomIn' if f_D > f_C else 'ZoomOut',
+            })
+        return droplets, labels
         
 
 """
