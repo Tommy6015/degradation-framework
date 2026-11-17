@@ -30,5 +30,7 @@ UNet 检测实验（`unet_detection/`）和论文插图（`figs/`）没有引入
   同类污渍全部叠加在一张结果图上；去掉了 `--only`（给了哪种就跑哪种）；位置也记进 `seed.json`。
   默认位置在脚本开头的 `DEFAULT_SPOTS`：只写 `--droplet` 不带数字用默认位置；一个都不写则三种都按默认跑。
   原图副本 `input.png` 默认不再保存，需要时加 `--save-input`。
+  不透明污渍的颜色改为命令行指定：`--opaque-color R G B`（纯色）、`--opaque-gradient R1 G1 B1 R2 G2 B2`
+  （边缘色→中心色）、`--opaque-gamma`，均可重复，每种颜色一张结果；不给则仍是原来的黑色 + 棕黑渐变。
 
 注意：模型权重是在 GPU 上保存的，按原样只能在有 CUDA 的机器上加载。

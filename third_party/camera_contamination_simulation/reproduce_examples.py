@@ -12,7 +12,8 @@ Contaminations are given as spots:  --opaque X Y SIZE  /  --semi X Y SIZE  /  --
   Y     vertical position,   0 = top edge,  1 = bottom edge
   SIZE  size relative to the longer image side (0.15 small, 0.5 already large)
 Repeat an option to add more spots of that type; all of them go onto ONE result image.
-Only the types you give are run. Defaults (DEFAULT_SPOTS below):
+Only the types you give are run (--opaque-color / --opaque-gradient alone also count as
+--opaque at its default spot). Defaults (DEFAULT_SPOTS below):
   --droplet            without numbers -> that type at its default spot
   no option at all     -> all three types at their default spots (the notebook examples)
 
@@ -33,6 +34,15 @@ Usage (from this folder, with the environment activated):
     # opaque soiling in the centre and one droplet, several files and folders at once
     uv run python reproduce_examples.py --opaque 0.5 0.5 0.3 --droplet 0.2 0.2 0.2 --image a.jpg b.png FOLDER --out OUT
 
+    # opaque soiling in your own colour (RGB 0..255), two spots
+    uv run python reproduce_examples.py --opaque 0.3 0.5 0.2 --opaque 0.7 0.4 0.15 --opaque-color 90 70 50 --image IMG.jpg --out OUT
+
+    # several colours at once: one result per colour, all with the same shapes
+    uv run python reproduce_examples.py --opaque --opaque-color 0 0 0 --opaque-color 90 70 50 --image IMG.jpg --out OUT
+
+    # gradient: edge colour -> centre colour; --opaque-gamma > 1 shows more of the edge colour
+    uv run python reproduce_examples.py --opaque --opaque-gradient 139 90 43 0 0 0 --opaque-gamma 2 --image IMG.jpg --out OUT
+
     # earlier behaviour: centre-crop to a square
     uv run python reproduce_examples.py --droplet 0.3 0.4 0.5 --image IMG.jpg --out OUT --square
 
@@ -44,8 +54,10 @@ Usage (from this folder, with the environment activated):
 
 Output: with a single input image the results go directly into --out; with several,
 each image gets its own subfolder --out/<image name>/. Per type: opaque_black.png and
-opaque_brown.png (same shapes, two colours), semi_scale10.png and semi_scale1000.png
-(two noise scales), droplet.png; each with a _mask.png, plus overview.png and seed.json.
+opaque_brown.png (same shapes, two colours; with --opaque-color / --opaque-gradient one
+file per given colour instead, e.g. opaque_90_70_50.png, opaque_139_90_43_to_0_0_0.png),
+semi_scale10.png and semi_scale1000.png (two noise scales), droplet.png; each with a
+_mask.png, plus overview.png and seed.json.
 With --save-input also input.png, a copy of the input image (not saved by default).
 
 Notes:
@@ -103,6 +115,15 @@ DEFAULT_SPOTS = {
     "semi": [[0.8, 0.6, 0.8]],
     "droplet": [[0.3, 0.4, 0.5]],
 }
+
+# Colours of the opaque soiling, used when neither --opaque-color nor --opaque-gradient
+# is given: one solid black result and one brown-to-black gradient result.
+OPAQUE_BLUR = (51, 51)  # Gaussian kernel (px, odd) that softens the edge of the opaque mask
+OPAQUE_GAMMA = 0.5  # default for --opaque-gamma
+DEFAULT_OPAQUE_VARIANTS = [
+    {"name": "opaque_black", "color": [0, 0, 0]},
+    {"name": "opaque_brown", "edge": [139, 90, 43], "centre": [0, 0, 0]},
+]
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
@@ -234,17 +255,20 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
     #    seed, so they have the same shapes and differ only in colour.
     if args.opaque:
         opaque = generators["opaque"]
-        variants = (
-            ("opaque_black", lambda im, x, y, s: opaque.apply_mask_to_image(
-                im, x, y, s, mask_color=(0, 0, 0), blur_kernel_size=(51, 51))),
-            ("opaque_brown", lambda im, x, y, s: opaque.apply_mask_to_image_twoc(
-                im, x, y, s, color_start=(139, 90, 43), color_end=(0, 0, 0), blur_kernel_size=(51, 51), gamma=0.5)),
-        )  # fmt: skip
-        for title, apply in variants:
+        for variant in args.opaque_variants:
+            if "color" in variant:  # one solid colour
+                def apply(im, x, y, s, v=variant):
+                    return opaque.apply_mask_to_image(
+                        im, x, y, s, mask_color=tuple(v["color"]), blur_kernel_size=OPAQUE_BLUR)
+            else:  # gradient from the edge colour to the centre colour
+                def apply(im, x, y, s, v=variant):
+                    return opaque.apply_mask_to_image_twoc(
+                        im, x, y, s, color_start=tuple(v["edge"]), color_end=tuple(v["centre"]),
+                        blur_kernel_size=OPAQUE_BLUR, gamma=v["gamma"])  # fmt: skip
             set_seed(seed)
             img, mask = apply_spots(img960, args.opaque, apply)
-            results.append((title, img, mask))
-        print(f"  opaque: {len(args.opaque)} spot(s)")
+            results.append((variant["name"], img, mask))
+        print(f"  opaque: {len(args.opaque)} spot(s), {len(args.opaque_variants)} colour variant(s)")
 
     # 2. Semi-transparent soiling (dust, sand): Perlin noise texture, at two noise scales.
     #    Slow: one noise evaluation per pixel (about 1 million at 960x960), so the time grows
@@ -311,6 +335,8 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
         "square": args.square,
         # spots as [x, y, size]; rerun with the same --opaque/--semi/--droplet and --seed to reproduce
         "opaque": args.opaque, "semi": args.semi, "droplet": args.droplet,
+        # opaque colours (RGB 0..255): "color" = solid, "edge"/"centre"/"gamma" = gradient
+        "opaque_colors": args.opaque_variants if args.opaque else [],
     }  # fmt: skip
     (out / "seed.json").write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     return seed
@@ -331,6 +357,18 @@ def main() -> None:
             f"--{name}", nargs="*", type=float, action="append", metavar="X Y SIZE",
             help=f"Add {what}: " + spot_help.format(DEFAULT_SPOTS[name]),
         )  # fmt: skip
+    parser.add_argument(
+        "--opaque-color", nargs=3, type=int, action="append", metavar=("R", "G", "B"),
+        help="Opaque soiling in one solid colour, RGB 0..255. Repeat for more colours (one result each, same shapes).",
+    )  # fmt: skip
+    parser.add_argument(
+        "--opaque-gradient", nargs=6, type=int, action="append", metavar=("R1", "G1", "B1", "R2", "G2", "B2"),
+        help="Opaque soiling as a gradient: edge colour R1 G1 B1 -> centre colour R2 G2 B2. Repeatable.",
+    )  # fmt: skip
+    parser.add_argument(
+        "--opaque-gamma", type=float, default=OPAQUE_GAMMA,
+        help=f"Gradient shape (default {OPAQUE_GAMMA}): < 1 more of the centre colour, > 1 more of the edge colour",
+    )  # fmt: skip
     parser.add_argument("--recursive", action="store_true", help="Also search subfolders of the given folders")
     parser.add_argument(
         "--seed", type=parse_seed, default=0,
@@ -341,6 +379,30 @@ def main() -> None:
     )
     parser.add_argument("--save-input", action="store_true", help="Also save a copy of the input image (input.png); off by default")
     args = parser.parse_args()
+
+    # Opaque colours. Giving a colour without --opaque means: opaque at its default spot.
+    colour_given = bool(args.opaque_color or args.opaque_gradient)
+    if colour_given and not args.opaque:
+        args.opaque = [[]]
+    if args.opaque_gamma <= 0:
+        parser.error(f"--opaque-gamma must be > 0, got {args.opaque_gamma:g}")
+    for values in (args.opaque_color or []) + (args.opaque_gradient or []):
+        if not all(0 <= v <= 255 for v in values):
+            parser.error(f"colour values must be 0..255, got {' '.join(map(str, values))}")
+    if colour_given:
+        variants = [{"name": "opaque_" + "_".join(map(str, c)), "color": c} for c in args.opaque_color or []]
+        variants += [
+            {"name": "opaque_" + "_".join(map(str, g[:3])) + "_to_" + "_".join(map(str, g[3:])),
+             "edge": g[:3], "centre": g[3:]}
+            for g in args.opaque_gradient or []
+        ]  # fmt: skip
+        variants = list({v["name"]: v for v in variants}.values())  # same colour twice -> once
+    else:
+        variants = [dict(v) for v in DEFAULT_OPAQUE_VARIANTS]
+    for v in variants:
+        if "edge" in v:
+            v["gamma"] = args.opaque_gamma
+    args.opaque_variants = variants
 
     # No option at all: all three types with their default spots
     use_all_defaults = not any(getattr(args, name) for name in GENERATORS)
