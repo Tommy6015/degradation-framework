@@ -43,6 +43,13 @@ Usage (from this folder, with the environment activated):
     # gradient: edge colour -> centre colour; --opaque-gamma > 1 shows more of the edge colour
     uv run python reproduce_examples.py --opaque --opaque-gradient 139 90 43 0 0 0 --opaque-gamma 2 --image IMG.jpg --out OUT
 
+    # every spot in its own colour, all on one image (result: opaque.png):
+    # X Y SIZE R G B = solid, X Y SIZE R1 G1 B1 R2 G2 B2 = gradient edge -> centre
+    uv run python reproduce_examples.py --opaque 0.3 0.5 0.2 0 0 0 --opaque 0.7 0.4 0.15 90 70 50 --opaque 0.5 0.8 0.1 139 90 43 0 0 0 --image IMG.jpg --out OUT
+
+    # spots without own colour follow --opaque-color etc. (or the defaults), spots with one keep it
+    uv run python reproduce_examples.py --opaque 0.3 0.5 0.2 --opaque 0.7 0.4 0.15 255 0 0 --image IMG.jpg --out OUT
+
     # earlier behaviour: centre-crop to a square
     uv run python reproduce_examples.py --droplet 0.3 0.4 0.5 --image IMG.jpg --out OUT --square
 
@@ -55,7 +62,8 @@ Usage (from this folder, with the environment activated):
 Output: with a single input image the results go directly into --out; with several,
 each image gets its own subfolder --out/<image name>/. Per type: opaque_black.png and
 opaque_brown.png (same shapes, two colours; with --opaque-color / --opaque-gradient one
-file per given colour instead, e.g. opaque_90_70_50.png, opaque_139_90_43_to_0_0_0.png),
+file per given colour instead, e.g. opaque_90_70_50.png, opaque_139_90_43_to_0_0_0.png;
+if every --opaque spot has its own colour, just one opaque.png),
 semi_scale10.png and semi_scale1000.png (two noise scales), droplet.png; each with a
 _mask.png, plus overview.png and seed.json.
 With --save-input also input.png, a copy of the input image (not saved by default).
@@ -157,12 +165,23 @@ def as_unit(mask: np.ndarray) -> np.ndarray:
     return m / 255.0 if np.issubdtype(mask.dtype, np.integer) else m
 
 
+def spot_colour(own: tuple, gamma: float) -> dict | None:
+    """The colour numbers after X Y SIZE of an --opaque spot: none, R G B (solid)
+    or R1 G1 B1 R2 G2 B2 (gradient edge -> centre). Same format as the variants."""
+    own = [int(v) for v in own]
+    if len(own) == 3:
+        return {"color": own}
+    if len(own) == 6:
+        return {"edge": own[:3], "centre": own[3:], "gamma": gamma}
+    return None
+
+
 def apply_spots(img: np.ndarray, spots: list[list[float]], apply) -> tuple[np.ndarray, np.ndarray]:
-    """Applies apply(img, x, y, size) -> (img, mask) for every spot, each on the result
-    of the previous one. Returns the final image and the merged (max) mask in 0..1."""
+    """Applies apply(img, x, y, size, *rest) -> (img, mask) for every spot, each on the
+    result of the previous one. Returns the final image and the merged (max) mask in 0..1."""
     merged = None
-    for x, y, size in spots:
-        img, mask = apply(img, x, y, size)
+    for spot in spots:
+        img, mask = apply(img, *spot)
         merged = as_unit(mask) if merged is None else np.maximum(merged, as_unit(mask))
     return img, merged
 
@@ -251,20 +270,21 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
     # The seed is set once before the spots, so each spot gets a different shape,
     # and the whole result is still reproducible from the seed.
 
-    # 1. Opaque soiling (mud, dirt), in two colours. Both variants use the same
-    #    seed, so they have the same shapes and differ only in colour.
+    # 1. Opaque soiling (mud, dirt), one result per colour variant. All variants use
+    #    the same seed, so they have the same shapes and differ only in colour.
+    #    A spot with its own colour (X Y SIZE R G B ...) keeps it in every variant.
     if args.opaque:
         opaque = generators["opaque"]
         for variant in args.opaque_variants:
-            if "color" in variant:  # one solid colour
-                def apply(im, x, y, s, v=variant):
+            def apply(im, x, y, s, *own, v=variant):
+                colour = spot_colour(own, args.opaque_gamma) or v
+                if "color" in colour:  # one solid colour
                     return opaque.apply_mask_to_image(
-                        im, x, y, s, mask_color=tuple(v["color"]), blur_kernel_size=OPAQUE_BLUR)
-            else:  # gradient from the edge colour to the centre colour
-                def apply(im, x, y, s, v=variant):
-                    return opaque.apply_mask_to_image_twoc(
-                        im, x, y, s, color_start=tuple(v["edge"]), color_end=tuple(v["centre"]),
-                        blur_kernel_size=OPAQUE_BLUR, gamma=v["gamma"])  # fmt: skip
+                        im, x, y, s, mask_color=tuple(colour["color"]), blur_kernel_size=OPAQUE_BLUR)
+                return opaque.apply_mask_to_image_twoc(  # gradient from the edge colour to the centre colour
+                    im, x, y, s, color_start=tuple(colour["edge"]), color_end=tuple(colour["centre"]),
+                    blur_kernel_size=OPAQUE_BLUR, gamma=colour["gamma"])  # fmt: skip
+
             set_seed(seed)
             img, mask = apply_spots(img960, args.opaque, apply)
             results.append((variant["name"], img, mask))
@@ -335,8 +355,10 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
         "square": args.square,
         # spots as [x, y, size]; rerun with the same --opaque/--semi/--droplet and --seed to reproduce
         "opaque": args.opaque, "semi": args.semi, "droplet": args.droplet,
-        # opaque colours (RGB 0..255): "color" = solid, "edge"/"centre"/"gamma" = gradient
+        # opaque colours (RGB 0..255): "color" = solid, "edge"/"centre"/"gamma" = gradient.
+        # Spots with numbers after X Y SIZE use their own colour instead (gamma = opaque_gamma).
         "opaque_colors": args.opaque_variants if args.opaque else [],
+        "opaque_gamma": args.opaque_gamma,
     }  # fmt: skip
     (out / "seed.json").write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     return seed
@@ -355,7 +377,9 @@ def main() -> None:
     for name, what in (("opaque", "opaque soiling"), ("semi", "semi-transparent soiling"), ("droplet", "water droplet")):
         parser.add_argument(
             f"--{name}", nargs="*", type=float, action="append", metavar="X Y SIZE",
-            help=f"Add {what}: " + spot_help.format(DEFAULT_SPOTS[name]),
+            help=f"Add {what}: " + spot_help.format(DEFAULT_SPOTS[name]) + (
+                " Optionally followed by this spot's own colour: R G B (solid) or R1 G1 B1 R2 G2 B2 "
+                "(gradient edge -> centre), RGB 0..255." if name == "opaque" else ""),
         )  # fmt: skip
     parser.add_argument(
         "--opaque-color", nargs=3, type=int, action="append", metavar=("R", "G", "B"),
@@ -414,9 +438,19 @@ def main() -> None:
             if not entry:  # option without numbers -> default spot(s)
                 spots += [list(s) for s in DEFAULT_SPOTS[name]]
                 continue
-            if len(entry) != 3:
+            if name == "opaque":  # opaque spots may carry their own colour
+                if len(entry) not in (3, 6, 9):
+                    parser.error(
+                        f"--opaque needs X Y SIZE, optionally followed by R G B (solid) or R1 G1 B1 R2 G2 B2 "
+                        f"(gradient), or nothing for the default; got {len(entry)} numbers"
+                    )
+                colour = entry[3:]
+                if not all(v == int(v) and 0 <= v <= 255 for v in colour):
+                    parser.error(f"--opaque colour values must be integers 0..255, got {' '.join(f'{v:g}' for v in colour)}")
+                entry = entry[:3] + [int(v) for v in colour]
+            elif len(entry) != 3:
                 parser.error(f"--{name} needs 3 numbers (X Y SIZE) or none for the default, got {len(entry)}")
-            x, y, size = entry
+            x, y, size = entry[:3]
             if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < size <= 1):
                 parser.error(f"--{name} {x:g} {y:g} {size:g}: x and y must be in 0..1, size in (0, 1]")
             spots.append(entry)
@@ -425,6 +459,11 @@ def main() -> None:
             selected.append(f"{name} x{len(spots)}")
     if use_all_defaults:
         print("No --opaque / --semi / --droplet given: running all three at their default spots")
+    # Every opaque spot has its own colour: the variants would all look the same -> one result
+    if args.opaque and all(len(s) > 3 for s in args.opaque):
+        if colour_given:
+            print("Every --opaque spot has its own colour: --opaque-color / --opaque-gradient are not used")
+        args.opaque_variants = [{"name": "opaque"}]
 
     images = collect_images(args.image, args.recursive)
     if not images:

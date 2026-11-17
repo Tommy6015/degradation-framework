@@ -32,5 +32,7 @@ UNet 检测实验（`unet_detection/`）和论文插图（`figs/`）没有引入
   原图副本 `input.png` 默认不再保存，需要时加 `--save-input`。
   不透明污渍的颜色改为命令行指定：`--opaque-color R G B`（纯色）、`--opaque-gradient R1 G1 B1 R2 G2 B2`
   （边缘色→中心色）、`--opaque-gamma`，均可重复，每种颜色一张结果；不给则仍是原来的黑色 + 棕黑渐变。
+  单块污渍也可以自带颜色：`--opaque X Y SIZE R G B` 或 `--opaque X Y SIZE R1 G1 B1 R2 G2 B2`，
+  多块不同颜色叠在同一张图上；每块都带颜色时只出一张 `opaque.png`。
 
 注意：模型权重是在 GPU 上保存的，按原样只能在有 CUDA 的机器上加载。
