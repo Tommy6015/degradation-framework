@@ -1,0 +1,17 @@
+# Line endings: text files are stored and checked out with LF on every machine,
+# whatever core.autocrlf is set to (Python, uv and VS Code all handle LF on Windows).
+* text=auto eol=lf
+
+# Binary: never converted (model weights, images, archives)
+*.pt    binary
+*.pth   binary
+*.ckpt  binary
+*.onnx  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.bmp   binary
+*.tif   binary
+*.tiff  binary
+*.webp  binary
+*.zip   binary
