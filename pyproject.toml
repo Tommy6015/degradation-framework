@@ -4,21 +4,35 @@ version = "0.1.0"
 description = "Image degradation framework (fog, lens dirt, water drops, ...) with a point-and-click GUI"
 readme = "README.md"
 requires-python = ">=3.10"
+# Only what the framework itself (core/, CLI) needs. What the code in third_party/
+# needs is in one dependency group per repository, see [dependency-groups].
 dependencies = [
     "numpy>=1.24",
     "pillow>=10.0",
     "pyyaml>=6.0",
-    # used by third_party/camera_contamination_simulation
-    "torch==2.11.*",           # CUDA build, see [tool.uv.sources] below
-    "opencv-python>=4.10",
-    "scipy>=1.11",
-    "matplotlib>=3.8",
-    # used by third_party/Clear2Fog (Depth Pro + camera fog)
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+# One group per third_party/ repository: what its code imports. When a repository is
+# added, upgraded or removed, its group goes with it. `uv sync` installs all groups
+# (default-groups below); leave one out with:  uv sync --no-group <name>
+clear2fog = [  # third_party/Clear2Fog: Depth Pro + camera fog
+    "torch==2.11.*",           # CUDA build, see [tool.uv.sources]
     "torchvision==0.26.*",     # must match torch 2.11, CUDA build
     "timm>=1.0",
     "pillow-heif>=0.18",
     "scikit-image>=0.24",
 ]
+camera-contamination = [  # third_party/camera_contamination_simulation
+    "torch==2.11.*",           # CUDA build, see [tool.uv.sources]
+    "opencv-python>=4.10",
+    "scipy>=1.11",
+    "matplotlib>=3.8",
+]
+
+[tool.uv]
+default-groups = "all"
 
 # torch / torchvision from the official CUDA 12.8 wheel index (GPU build), not the CPU build on PyPI
 [tool.uv.sources]
@@ -36,9 +50,6 @@ gui = ["gradio>=4.0"]
 
 [project.scripts]
 degfw = "degradation_fw.cli:main"
-
-[dependency-groups]
-dev = ["pytest>=8.0"]
 
 [build-system]
 requires = ["hatchling"]

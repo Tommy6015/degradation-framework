@@ -584,24 +584,13 @@ wheels = [
 name = "degradation-fw"
 version = "0.1.0"
 source = { editable = "." }
+default-groups = "all"
 dependencies = [
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "opencv-python" },
     { name = "pillow" },
-    { name = "pillow-heif" },
     { name = "pyyaml" },
-    { name = "scikit-image", version = "0.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-image", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "timm" },
-    { name = "torch" },
-    { name = "torchvision" },
 ]
 
 [package.optional-dependencies]
@@ -610,6 +599,23 @@ gui = [
 ]
 
 [package.dev-dependencies]
+camera-contamination = [
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "opencv-python" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "torch" },
+]
+clear2fog = [
+    { name = "pillow-heif" },
+    { name = "scikit-image", version = "0.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-image", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "timm" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
 dev = [
     { name = "pytest" },
 ]
@@ -617,21 +623,26 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "gradio", marker = "extra == 'gui'", specifier = ">=4.0" },
-    { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.24" },
-    { name = "opencv-python", specifier = ">=4.10" },
     { name = "pillow", specifier = ">=10.0" },
-    { name = "pillow-heif", specifier = ">=0.18" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "scikit-image", specifier = ">=0.24" },
-    { name = "scipy", specifier = ">=1.11" },
-    { name = "timm", specifier = ">=1.0" },
-    { name = "torch", specifier = "==2.11.*", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", specifier = "==0.26.*", index = "https://download.pytorch.org/whl/cu128" },
 ]
 provides-extras = ["gui"]
 
 [package.metadata.requires-dev]
+camera-contamination = [
+    { name = "matplotlib", specifier = ">=3.8" },
+    { name = "opencv-python", specifier = ">=4.10" },
+    { name = "scipy", specifier = ">=1.11" },
+    { name = "torch", specifier = "==2.11.*", index = "https://download.pytorch.org/whl/cu128" },
+]
+clear2fog = [
+    { name = "pillow-heif", specifier = ">=0.18" },
+    { name = "scikit-image", specifier = ">=0.24" },
+    { name = "timm", specifier = ">=1.0" },
+    { name = "torch", specifier = "==2.11.*", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchvision", specifier = "==0.26.*", index = "https://download.pytorch.org/whl/cu128" },
+]
 dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
