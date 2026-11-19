@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from degradation_fw import Pipeline, Step, available, get
 from degradation_fw.core.io import load_image, save_image
@@ -47,3 +48,16 @@ def test_run_folder_writes_images_and_metadata(tmp_path, image):
         assert load_image(o).shape == image.shape
         meta = json.loads(o.with_suffix(".json").read_text(encoding="utf-8"))
         assert meta["steps"][0]["name"] == "gaussian_noise"
+
+
+def test_load_image_applies_exif_orientation(tmp_path):
+    """A photo stored sideways with orientation tag 6 ("rotate 90° clockwise to view")
+    is read upright: 40 x 30 stored -> 30 wide, 40 high; the stored left half on top."""
+    stored = np.zeros((30, 40, 3), np.uint8)
+    stored[:, :20] = (255, 0, 0)
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    Image.fromarray(stored).save(tmp_path / "portrait.jpg", exif=exif.tobytes(), quality=95)
+    img = load_image(tmp_path / "portrait.jpg")
+    assert img.shape == (40, 30, 3)
+    assert img[:18, :, 0].mean() > 0.9 and img[22:, :, 0].mean() < 0.1

@@ -75,8 +75,9 @@ uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
 
 - `-v` 可以给多个值，例如 `-v 25 50 100 250 500`：每张图只估算一次景深，每个能见度各出一张。
 - 输出文件名同 `c2f.py`：`foggy_<原文件名>_vis_<能见度>.png`，直接放在输出文件夹里；另有 `fog_run.json` 记录参数。
-- 默认 float32，结果与原版 Clear2Fog **逐像素一致**。8 GB 显卡上 Depth Pro 显存不够，每张约 20 s；
+- 默认 float32，结果与原版 Clear2Fog **逐像素一致**（不带 EXIF 旋转标记的图片）。8 GB 显卡上 Depth Pro 显存不够，每张约 20 s；
   加 `--fp16` 后每张约 1 s，与原版每个像素最多差 2/255。
+- 手机竖拍照片这类带 EXIF 旋转标记的图片，先按标记转正再加雾，输出也是转正的（原版 `c2f.py` 处理这类照片会失败或景深颠倒）。
 - 第一次使用前下载 Depth Pro 权重（约 1.9 GB，不在 git 里）：`uv run degfw weights --download`。
 - 和其他退化一样也可以用 `uv run degfw run fog -i 输入 -o 输出 -p visibility=50`，
   或在 YAML 流程里：`- name: fog` + `params: {visibility: 50, fp16: true}`。
@@ -118,3 +119,4 @@ uv run pytest -m "not slow"         # 只跑不需要模型的，不到 1 秒
 
 框架内部统一使用 `numpy.float32`、形状 `H x W x 3`、RGB、取值 `[0, 1]`。
 如果开源代码使用 BGR / uint8 / torch tensor，在适配器里做转换。
+读图时按 EXIF 方向标记转正（`core/io.py`），输出文件不带方向标记。

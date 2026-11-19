@@ -1,11 +1,15 @@
-"""Image I/O. Uses Pillow so non-ASCII (e.g. Chinese) Windows paths work."""
+"""Image I/O. Uses Pillow so non-ASCII (e.g. Chinese) Windows paths work.
+
+Images are read upright: phone cameras store portrait photos sideways plus an EXIF
+orientation tag, and that tag is applied when reading (output files carry no tag).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
@@ -26,9 +30,16 @@ def to_uint8(img: np.ndarray) -> np.ndarray:
     return (np.clip(img, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 
 
-def load_image(path: str | Path) -> np.ndarray:
+def load_rgb_u8(path: str | Path) -> np.ndarray:
+    """uint8 RGB H x W x 3, upright (EXIF orientation applied); any colour mode
+    (grey, palette, RGBA, CMYK, ...) converted to RGB."""
     with Image.open(path) as im:
-        return to_float(np.asarray(im.convert("RGB")))
+        return np.array(ImageOps.exif_transpose(im).convert("RGB"))  # a writable copy
+
+
+def load_image(path: str | Path) -> np.ndarray:
+    """float32 RGB H x W x 3 in [0, 1], upright (see load_rgb_u8)."""
+    return to_float(load_rgb_u8(path))
 
 
 def save_image(img: np.ndarray, path: str | Path) -> None:

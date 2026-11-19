@@ -45,6 +45,22 @@ def test_fog_denser_at_lower_visibility(usable):
 
 
 @pytest.mark.slow
+def test_fog_command_handles_rotated_photos(usable, tmp_path):
+    """A portrait photo stored sideways with an EXIF orientation tag (as phones do)
+    failed in c2f.py (RGB and depth rotated differently); now it is fogged upright."""
+    usable("fog")
+    from degradation_fw.degradations.weather.fog import run_cli
+
+    stored = np.asarray(Image.open(REFERENCE_INPUT).convert("RGB"))  # 96 x 128, landscape
+    exif = Image.Exif()
+    exif[0x0112] = 6  # rotate 90° clockwise to view
+    Image.fromarray(stored).save(tmp_path / "portrait.jpg", exif=exif.tobytes(), quality=95)
+    assert run_cli([tmp_path / "portrait.jpg"], tmp_path / "out", [REFERENCE_VISIBILITY]) == 0
+    out = np.asarray(Image.open(tmp_path / "out" / f"foggy_portrait_vis_{REFERENCE_VISIBILITY}.png"))
+    assert out.shape == (128, 96, 3)  # upright
+
+
+@pytest.mark.slow
 def test_fog_matches_reference(usable):
     """Regression test: the float32 result for tests/data/fog_scene.png must stay as it
     was when the adapter was checked to be pixel-identical to Clear2Fog's c2f.py.

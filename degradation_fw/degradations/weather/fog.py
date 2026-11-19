@@ -19,7 +19,12 @@ Two ways to use it:
         uv run degfw run fog -i INPUT -o OUTPUT -p visibility=50
     or as a step of a pipeline config (degfw apply, GUI).
 
-Differences to running c2f.py, none of which change the fog itself:
+Differences to running c2f.py. For images without an EXIF orientation tag none of
+them changes the result (float32: pixel-identical):
+  - Photos with an EXIF orientation tag (e.g. portrait photos from phones) are turned
+    upright first, and RGB and depth come from the same pixels. c2f.py reads the RGB
+    without and the depth with the rotation, so such photos fail there (90°) or get an
+    upside-down depth map (180°).
   - The average atmospheric light (only used for images without sky) is computed
     only when such an image comes up, from a sample drawn with a fixed seed
     (c2f.py: always at start, unseeded sample). With <= 100 input images the
@@ -41,7 +46,7 @@ from pathlib import Path
 import numpy as np
 
 from degradation_fw.core.base import Degradation
-from degradation_fw.core.io import to_uint8
+from degradation_fw.core.io import load_rgb_u8, to_uint8
 from degradation_fw.core.params import Bool, Int
 from degradation_fw.core.paths import import_third_party_package, third_party_dir, working_dir
 from degradation_fw.core.registry import register, register_command
@@ -98,16 +103,25 @@ class Clear2Fog:
         print(f"Clear2Fog: Depth Pro loaded on {self.depth.device} ({'float16' if fp16 else 'float32'}) "
               f"in {time.time() - t:.1f} s")
 
-    # ---- depth -----------------------------------------------------------------
-    def depth_from_path(self, path: str | Path) -> np.ndarray:
-        """As c2f.py: Depth Pro reads the file itself (uses the EXIF focal length if present).
-        float32 out also with fp16, so the fog formula is computed in float32."""
-        return self.depth.run(str(path)).astype(np.float32, copy=False)
+    # ---- image + depth -----------------------------------------------------------
+    def load(self, path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+        """RGB (uint8, upright) and metric depth of an image file, both from the same
+        pixels, so they always match. The depth uses the EXIF focal length if the file
+        has one, as in c2f.py.
 
-    def depth_from_array(self, rgb_u8: np.ndarray) -> np.ndarray:
-        """Same as DepthGenerator.run, for an image in memory (no EXIF, so the focal
-        length is estimated by Depth Pro)."""
-        prediction = self.depth.model.infer(self.depth.transform(rgb_u8), f_px=None)
+        c2f.py reads the RGB without and Depth Pro reads the file with the EXIF
+        rotation, so a photo with an orientation tag failed there (90°: shapes differ)
+        or got an upside-down depth map (180°). Without a tag the result is the same.
+        """
+        rgb = load_rgb_u8(path)
+        _, _, f_px = self._load_rgb(path)  # Depth Pro's own loader, used only for the EXIF focal length
+        return rgb, self.depth_from_array(rgb, f_px)
+
+    def depth_from_array(self, rgb_u8: np.ndarray, f_px: float | None = None) -> np.ndarray:
+        """Same as DepthGenerator.run, for an image in memory. f_px: focal length in
+        pixels; None = estimated by Depth Pro (images in memory have no EXIF). float32
+        out also with fp16, so the fog formula is computed in float32."""
+        prediction = self.depth.model.infer(self.depth.transform(rgb_u8), f_px=f_px)
         return prediction["depth"].cpu().detach().float().numpy()
 
     # ---- atmospheric light -----------------------------------------------------
@@ -123,8 +137,7 @@ class Clear2Fog:
             paths = random.Random(SAMPLE_SEED).sample(paths, MAX_AVG_SAMPLES)
         lights = []
         for p in paths:
-            rgb = self.read_rgb(p)
-            light = self.sky_light(rgb, self.depth_from_path(p))
+            light = self.sky_light(*self.load(p))
             if light is not None:
                 lights.append(light)
         if lights:
@@ -137,13 +150,6 @@ class Clear2Fog:
     def simulate(self, rgb_u8: np.ndarray, depth: np.ndarray, visibility: float) -> np.ndarray:
         """Clear2Fog's FogCamera.simulate, as called in c2f.py. uint8 RGB in and out."""
         return self.fog.simulate(rgb_u8, rgb_u8, depth, visibility=visibility, min_depth=MIN_SKY_DEPTH)
-
-    @staticmethod
-    def read_rgb(path: str | Path) -> np.ndarray:
-        from PIL import Image
-
-        with Image.open(path) as im:  # as c2f.py
-            return np.array(im.convert("RGB"))
 
 
 _ENGINE: Clear2Fog | None = None
@@ -228,8 +234,7 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
     for i, path in enumerate(images, start=1):
         t = time.time()
         try:
-            rgb = c2f.read_rgb(path)
-            depth = c2f.depth_from_path(path)
+            rgb, depth = c2f.load(path)
             light = c2f.sky_light(rgb, depth)
             if light is None and not average_done:
                 avg, n_sky = c2f.set_average_light(images)
