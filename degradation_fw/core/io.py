@@ -6,6 +6,7 @@ orientation tag, and that tag is applied when reading (output files carry no tag
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -51,3 +52,20 @@ def save_image(img: np.ndarray, path: str | Path) -> None:
 def list_images(folder: str | Path) -> list[Path]:
     folder = Path(folder)
     return sorted(p for p in folder.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
+
+
+def unique_stems(paths: Sequence[str | Path]) -> list[str]:
+    """Output base names for files whose results go into one folder: each file's stem,
+    with _2, _3, ... added when the stem is already taken by an earlier file (compared
+    case-insensitively, as on Windows), so no result overwrites another:
+    a.jpg, a.png -> a, a_2. The first file in the given order keeps its plain name."""
+    used: set[str] = set()
+    names = []
+    for p in paths:
+        stem = name = Path(p).stem
+        n = 2
+        while name.lower() in used:
+            name, n = f"{stem}_{n}", n + 1
+        used.add(name.lower())
+        names.append(name)
+    return names

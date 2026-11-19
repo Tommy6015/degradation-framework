@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from degradation_fw import Pipeline, Step, available, get
-from degradation_fw.core.io import load_image, save_image
+from degradation_fw.core.io import load_image, save_image, unique_stems
 from degradation_fw.core.pipeline import image_seed
 
 
@@ -81,6 +81,21 @@ def test_recorded_seed_redoes_one_image(tmp_path, image):
     seed = folder_seeds(p, tmp_path / "in", tmp_path / "out")["a.png"]
     p.run_file(tmp_path / "in" / "a.png", tmp_path / "again.png", seed=seed)
     np.testing.assert_array_equal(load_image(tmp_path / "again.png"), load_image(tmp_path / "out" / "a.png"))
+
+
+def test_unique_stems():
+    assert unique_stems(["x/a.jpg", "y/A.png", "a_2.png", "b.png"]) == ["a", "A_2", "a_2_2", "b"]
+
+
+def test_same_stem_in_one_folder_does_not_overwrite(tmp_path, image):
+    src = tmp_path / "in"
+    save_image(image, src / "a.png")
+    save_image(image * 0.5, src / "a.jpg")
+    save_image(image, src / "sub" / "a.png")  # another folder: keeps its plain name
+    outs = Pipeline([Step("gaussian_noise", {"sigma": 0.0})], seed=0).run_folder(src, tmp_path / "out")
+    assert sorted(o.relative_to(tmp_path / "out").as_posix() for o in outs) == ["a.png", "a_2.png", "sub/a.png"]
+    sources = {json.loads(o.with_suffix(".json").read_text(encoding="utf-8"))["source"] for o in outs}
+    assert len(sources) == 3  # each result has its own .json, pointing to its own input
 
 
 def test_load_image_applies_exif_orientation(tmp_path):

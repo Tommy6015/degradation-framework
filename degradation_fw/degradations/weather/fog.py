@@ -30,6 +30,9 @@ them changes the result (float32: pixel-identical):
     (c2f.py: always at start, unseeded sample). With <= 100 input images the
     sample is all images, as in c2f.py.
   - Several visibilities in one run reuse the depth map of each image.
+  - An input whose name is already taken by an earlier input (same file name in
+    another folder, or a.jpg next to a.png) gets _2, _3, ... in its output names;
+    c2f.py overwrites the earlier results.
   - Clear2Fog's package __init__ is bypassed, so its LiDAR part (and PyQt5) is
     not needed.
 """
@@ -46,7 +49,7 @@ from pathlib import Path
 import numpy as np
 
 from degradation_fw.core.base import Degradation
-from degradation_fw.core.io import load_rgb_u8, to_uint8
+from degradation_fw.core.io import load_rgb_u8, to_uint8, unique_stems
 from degradation_fw.core.params import Bool, Int
 from degradation_fw.core.paths import import_third_party_package, third_party_dir, working_dir
 from degradation_fw.core.registry import register, register_command
@@ -210,7 +213,10 @@ def collect_inputs(inputs: list[Path]) -> list[Path]:
 
 def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bool = False) -> int:
     """Fog every input image at every visibility. Output names as in c2f.py:
-    <out>/foggy_<name>_vis_<v>.png. Returns the number of failed images."""
+    <out>/foggy_<name>_vis_<v>.png, where an input whose name is already taken by an
+    earlier one (same file name in another folder, or a.jpg next to a.png) gets
+    <name>_2, _3, ... instead of overwriting its results. Returns the number of
+    failed images."""
     from PIL import Image
 
     try:
@@ -231,7 +237,7 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
     record = {"method": "Clear2Fog", "visibility_m": visibilities,
               "depth_pro_precision": "float16" if fp16 else "float32", "images": {}}
     failed = 0
-    for i, path in enumerate(images, start=1):
+    for i, (path, name) in enumerate(zip(images, unique_stems(images)), start=1):
         t = time.time()
         try:
             rgb, depth = c2f.load(path)
@@ -242,16 +248,20 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
                 record["average_light"] = {"value": [round(float(x), 4) for x in avg], "images_with_sky": n_sky}
                 print(f"  (no sky in {path.name}: average atmospheric light over the input set = "
                       f"{np.round(avg, 3).tolist()}, from {n_sky} image(s) with sky)")
+            outputs = []
             for v in visibilities:
                 foggy = c2f.simulate(rgb, depth, v)
-                Image.fromarray(foggy).save(out_dir / f"foggy_{path.stem}_vis_{v}.png")
-            record["images"][path.name] = {
+                outputs.append(f"foggy_{name}_vis_{v}.png")
+                Image.fromarray(foggy).save(out_dir / outputs[-1])
+            record["images"][name] = {
                 "source": str(path),
+                "outputs": outputs,
                 "atmospheric_light": "sky" if light is not None else "average of input set",
                 "depth_m": {"min": round(float(depth.min()), 2), "median": round(float(np.median(depth)), 2)},
             }
             print(f"[{i}/{len(images)}] {path.name}: {time.time() - t:.1f} s"
-                  + ("" if light is not None else "  (no sky -> average light)"))
+                  + ("" if light is not None else "  (no sky -> average light)")
+                  + ("" if name == path.stem else f"  (name already taken: saved as foggy_{name}_...)"))
         except Exception as e:  # keep going, like c2f.py
             failed += 1
             print(f"[{i}/{len(images)}] {path.name}: FAILED: {e}")

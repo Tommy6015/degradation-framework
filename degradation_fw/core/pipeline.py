@@ -23,7 +23,7 @@ import numpy as np
 import yaml
 
 from . import registry
-from .io import list_images, load_image, save_image
+from .io import list_images, load_image, save_image, unique_stems
 
 
 def image_seed(seed: int, rel_path: str | Path) -> int:
@@ -103,14 +103,22 @@ class Pipeline:
 
         Each image gets the seed image_seed(pipeline seed, its path relative to src_dir),
         or a random one if the pipeline has no seed; the seed used is in its .json.
+        Results are .png: two images of one folder with the same stem (a.jpg, a.png)
+        give a.png and a_2.png instead of overwriting each other.
         """
         src_dir, dst_dir = Path(src_dir), Path(dst_dir)
         files = list_images(src_dir)
+        rels = [f.relative_to(src_dir) for f in files]
+        dsts = [Path()] * len(files)
+        by_folder: dict[str, list[int]] = {}
+        for i, rel in enumerate(rels):
+            by_folder.setdefault(rel.parent.as_posix().lower(), []).append(i)
+        for idx in by_folder.values():
+            for i, stem in zip(idx, unique_stems([rels[i] for i in idx])):
+                dsts[i] = dst_dir / rels[i].parent / f"{stem}.png"
         outputs = []
-        for i, f in enumerate(files):
-            rel = f.relative_to(src_dir)
+        for i, (f, rel, dst) in enumerate(zip(files, rels, dsts)):
             seed = None if self.seed is None else image_seed(self.seed, rel)
-            dst = (dst_dir / rel).with_suffix(".png")
             self.run_file(f, dst, seed=seed)
             outputs.append(dst)
             if progress:

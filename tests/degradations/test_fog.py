@@ -45,19 +45,23 @@ def test_fog_denser_at_lower_visibility(usable):
 
 
 @pytest.mark.slow
-def test_fog_command_handles_rotated_photos(usable, tmp_path):
+def test_fog_command_rotated_photos_and_same_names(usable, tmp_path):
     """A portrait photo stored sideways with an EXIF orientation tag (as phones do)
-    failed in c2f.py (RGB and depth rotated differently); now it is fogged upright."""
+    failed in c2f.py (RGB and depth rotated differently); now it is fogged upright.
+    The same file name in two input folders: two results, nothing overwritten."""
     usable("fog")
     from degradation_fw.degradations.weather.fog import run_cli
 
     stored = np.asarray(Image.open(REFERENCE_INPUT).convert("RGB"))  # 96 x 128, landscape
     exif = Image.Exif()
     exif[0x0112] = 6  # rotate 90° clockwise to view
-    Image.fromarray(stored).save(tmp_path / "portrait.jpg", exif=exif.tobytes(), quality=95)
-    assert run_cli([tmp_path / "portrait.jpg"], tmp_path / "out", [REFERENCE_VISIBILITY]) == 0
-    out = np.asarray(Image.open(tmp_path / "out" / f"foggy_portrait_vis_{REFERENCE_VISIBILITY}.png"))
-    assert out.shape == (128, 96, 3)  # upright
+    for folder in ("a", "b"):
+        (tmp_path / folder).mkdir()
+        Image.fromarray(stored).save(tmp_path / folder / "portrait.jpg", exif=exif.tobytes(), quality=95)
+    assert run_cli([tmp_path / "a", tmp_path / "b"], tmp_path / "out", [REFERENCE_VISIBILITY]) == 0
+    for name in ("portrait", "portrait_2"):
+        out = np.asarray(Image.open(tmp_path / "out" / f"foggy_{name}_vis_{REFERENCE_VISIBILITY}.png"))
+        assert out.shape == (128, 96, 3)  # upright
 
 
 @pytest.mark.slow
