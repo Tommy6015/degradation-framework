@@ -12,9 +12,12 @@ Method (unchanged from Clear2Fog):
   lower = denser fog.
 
 Two ways to use it:
-  - command line, like Clear2Fog's c2f.py (only input, output, visibility):
+  - its own command (registered below), like Clear2Fog's c2f.py (only input,
+    output, visibility):
         uv run degfw fog -i INPUT -o OUTPUT -v 100
-  - as the registered degradation "fog" in a pipeline (param: visibility).
+  - as the registered degradation "fog" (params visibility, fp16), like any other:
+        uv run degfw run fog -i INPUT -o OUTPUT -p visibility=50
+    or as a step of a pipeline config (degfw apply, GUI).
 
 Differences to running c2f.py, none of which change the fog itself:
   - The average atmospheric light (only used for images without sky) is computed
@@ -41,7 +44,7 @@ from degradation_fw.core.base import Degradation
 from degradation_fw.core.io import to_uint8
 from degradation_fw.core.params import Bool, Int
 from degradation_fw.core.paths import import_third_party_package, third_party_dir, working_dir
-from degradation_fw.core.registry import register
+from degradation_fw.core.registry import register, register_command
 from degradation_fw.core.weights import missing_weights
 
 REPO = "Clear2Fog"  # third_party/Clear2Fog
@@ -250,3 +253,27 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
     (out_dir / "fog_run.json").write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Done: {len(images) - failed} of {len(images)} image(s) -> {out_dir}")
     return failed
+
+
+def _add_arguments(parser) -> None:
+    parser.add_argument("-i", "--input", type=Path, nargs="+", required=True,
+                        help="input image(s) and/or folder(s) with .png/.jpg/.jpeg")
+    parser.add_argument("-o", "--output", type=Path, required=True, help="output folder")
+    parser.add_argument("-v", "--visibility", type=int, nargs="+", default=[100],
+                        help="visibility in metres, lower = denser fog (default 100); several values: one image each")
+    parser.add_argument("--fp16", action="store_true",
+                        help="run Depth Pro in float16: ~20x faster on an 8 GB GPU, results differ slightly "
+                             "from Clear2Fog (default float32 = identical)")
+
+
+def _run_command(args) -> int:
+    reason = Fog.unavailable_reason()
+    if reason:
+        raise SystemExit(f"fog cannot run here:\n{reason}")
+    return 1 if run_cli(args.input, args.output, args.visibility, fp16=args.fp16) else 0
+
+
+register_command(
+    "fog", help="add fog with Clear2Fog (Depth Pro depth + atmospheric scattering)",
+    description="Add fog to images with Clear2Fog. Output: OUTPUT/foggy_<name>_vis_<v>.png",
+    add_arguments=_add_arguments, run=_run_command)
