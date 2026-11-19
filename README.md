@@ -59,7 +59,7 @@ degradation-framework/
 | 开源代码需要的 Python 包 | `pyproject.toml` 里这个仓库的 dependency group |
 | 开源代码的模型权重 | 文件跟着它留在 `third_party/<仓库名>/` 里，并在 `third_party/weights.yaml` 登记一条 |
 | 对开源代码的调整（格式转换、参数换算） | `degradation_fw/degradations/<类别>/xxx.py` 适配器里 |
-| 必须直接改开源代码本身 | 在 `third_party/` 里改，单独提交，写进它的 `LOCAL_CHANGES.md`；改动大的提交到 fork 后重新引入 |
+| 必须直接改开源代码本身 | 直接在 `third_party/` 里改，单独提交（提交说明以 `third_party/<仓库名>:` 开头）；和原版的差别用 git 查看，命令见它的 `LOCAL_CHANGES.md`。第三方代码只在这里维护，不另外维护 fork |
 | 自己写的、用开源代码的脚本或工具 | `scripts/`（不放进 `third_party/`） |
 | 某次实验的参数组合 | `configs/xxx.yaml` |
 | 测试用的小图、参考结果 | `tests/data/` |
