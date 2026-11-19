@@ -8,6 +8,8 @@
 这是一个**工作区**：在仓库里用 `uv run` 运行，不是可以 `pip install` 到别处的库
 （代码按源码位置找 `third_party/`，打成 wheel 单独安装后找不到）。
 
+这个 README 只讲整个项目；路线图、系统架构图、关键决策记录、每周状态和各退化的详细用法在 [`doc/`](doc/README.md)。
+
 ## 目录结构：什么东西放哪里
 
 ```
@@ -45,6 +47,12 @@ degradation-framework/
 ├── configs/                     ④ 参数预设（YAML），一次实验一个文件
 ├── scripts/                     ⑤ 自己的试验脚本和工具
 │   └── contamination_examples.py   镜头污染的运行脚本（选项见 scripts/README.md）
+├── doc/                         ⑥ 开发过程文档（入口 doc/README.md）
+│   ├── roadmap.md                  目标、里程碑、下一步
+│   ├── architecture.md             模块依赖图、数据流图
+│   ├── decisions/                  关键决策记录，一个决定一个文件
+│   ├── status/                     每周状态，一周一个文件
+│   └── degradations/               各退化的详细用法
 ├── tests/                          测试
 │   ├── test_*.py                     框架本身；test_contract.py 自动检查每个已注册的退化
 │   ├── degradations/test_<名字>.py   每个退化自己的测试
@@ -64,24 +72,17 @@ degradation-framework/
 | 某次实验的参数组合 | `configs/xxx.yaml` |
 | 测试用的小图、参考结果 | `tests/data/` |
 | 输入图片 / 生成的数据集 | `data/`、`outputs/` |
+| 开发计划、每周进展 | `doc/roadmap.md`、`doc/status/<年>-W<周>.md` |
+| 一个关键决定（为什么这样做、放弃了哪些方案） | `doc/decisions/NNNN-xxx.md`（写法见 `doc/decisions/README.md`） |
+| 某种退化的详细用法、方法 | `doc/degradations/<名字>.md` |
 
-## 加雾（Clear2Fog）
+## 已有的退化
 
-和 Clear2Fog 的 `c2f.py` 一样，只需要输入、输出和能见度（米，越小雾越浓）：
-
-```bash
-uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
-```
-
-- `-v` 可以给多个值，例如 `-v 25 50 100 250 500`：每张图只估算一次景深，每个能见度各出一张。
-- 输出文件名同 `c2f.py`：`foggy_<原文件名>_vis_<能见度>.png`，直接放在输出文件夹里；另有 `fog_run.json` 记录参数。
-  不同文件夹里有同名图片（或 `a.jpg` 和 `a.png` 这种同名不同扩展名）时，后面的加 `_2`、`_3`，不会覆盖前面的结果。
-- 默认 float32，结果与原版 Clear2Fog **逐像素一致**（不带 EXIF 旋转标记的图片）。8 GB 显卡上 Depth Pro 显存不够，每张约 20 s；
-  加 `--fp16` 后每张约 1 s，与原版每个像素最多差 2/255。
-- 手机竖拍照片这类带 EXIF 旋转标记的图片，先按标记转正再加雾，输出也是转正的（原版 `c2f.py` 处理这类照片会失败或景深颠倒）。
-- 第一次使用前下载 Depth Pro 权重（约 1.9 GB，不在 git 里）：`uv run degfw weights --download`。
-- 和其他退化一样也可以用 `uv run degfw run fog -i 输入 -o 输出 -p visibility=50`，
-  或在 YAML 流程里：`- name: fog` + `params: {visibility: 50, fp16: true}`。
+| 退化 | 说明 | 详细用法 |
+|---|---|---|
+| `fog` | 雾：Clear2Fog（Depth Pro 景深 + 大气散射），有自己的命令 `uv run degfw fog -i 输入 -o 输出 -v 100` | [doc/degradations/fog.md](doc/degradations/fog.md) |
+| `gaussian_noise` | 高斯噪声，示例，用来验证框架 | 参数见 `uv run degfw list` |
+| 镜头污染 | 还没接入框架，目前用 `scripts/contamination_examples.py` 单独运行 | [scripts/README.md](scripts/README.md) |
 
 ## 添加一种退化
 
@@ -105,7 +106,7 @@ uv run degfw weights --download     # 下载缺的模型权重；不加参数只
 uv run degfw list                   # 所有退化、参数，以及在这台机器上能不能运行
 uv run degfw run gaussian_noise -i 输入 -o 输出 -p sigma=0.1          # 单个退化
 uv run degfw apply -c configs/example.yaml -i data/input -o outputs/run1   # 按配置串联多个退化
-uv run pytest                       # 全部测试（含需要 GPU 和模型的，约 1.5 分钟）
+uv run pytest                       # 全部测试（含需要 GPU 和模型的，约 2 分钟）
 uv run pytest -m "not slow"         # 只跑不需要模型的，不到 1 秒
 ```
 
