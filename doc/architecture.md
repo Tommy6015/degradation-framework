@@ -13,7 +13,7 @@
 ## 1. 分层结构
 
 ```mermaid
-%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "wrappingWidth": 400}}}%%
 flowchart TB
     subgraph L1["入口层"]
         cli["cli.py<br/>degfw 命令"]
@@ -33,14 +33,14 @@ flowchart TB
     end
 
     subgraph L3["适配器 degradations/"]
-        fog["weather/fog.py"]
-        noise["sensor/<br/>gaussian_noise.py"]
-        lens["lens/lens_dirt.py<br/>待实现"]
+        fog["weather/<br/>fog.py"]
+        noise["sensor/<br/>gaussian_<br/>noise.py"]
+        lens["lens/<br/>lens_dirt.py<br/>（待实现）"]
     end
 
     subgraph L4["第三方代码 third_party/"]
         c2f["Clear2Fog/"]
-        ccs["camera_contamination_<br/>simulation/"]
+        ccs["camera_<br/>contamination_<br/>simulation/"]
         wyaml["weights.yaml"]
     end
 

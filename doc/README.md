@@ -15,6 +15,8 @@
 
 - 图用 [Mermaid](https://mermaid.js.org/) 写在 Markdown 里（VS Code 装了 Mermaid 扩展可以预览，GitHub 上直接显示）。画图时：
   - 框里只写名字，一行几个字；详细说明写在图下面的表格里。中文长句放在框里，预览时会被截断或折行。
+  - 文件名这类中间不能断开的长词，每段控制在 12 个字符以内，更长的在 `/` 或 `_` 处用 `<br/>` 手动换行，
+    否则预览会在词的中间折开（如 `lens_dirt.p / y`）。
   - 流程图（`flowchart`）和类图（`classDiagram`）第一行照 `architecture.md` 里的写法加 `%%{init: ...}%%`，关掉 `htmlLabels`：
     文字由 Mermaid 自己排版，大小不受预览样式影响。
 - 周的编号用 ISO 周（周一开始）：`uv run python -c "import datetime; print(datetime.date.today().isocalendar())"`。

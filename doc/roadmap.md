@@ -12,7 +12,7 @@
 ## 论文项目总体架构
 
 ```mermaid
-%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "wrappingWidth": 400}}}%%
 flowchart TB
     subgraph S1["① 数据来源"]
         tum[("TUMTraf 数据集")]
