@@ -1,4 +1,4 @@
-"""Command line entry point:  degfw {list,apply,gui}"""
+"""Command line entry point:  degfw {list,apply,fog,gui}"""
 
 from __future__ import annotations
 
@@ -37,6 +37,14 @@ def _cmd_apply(args) -> None:
         print(f"Done: {dst} (seed={meta['seed']})")
 
 
+def _cmd_fog(args) -> None:
+    from .degradations.weather.fog import run_cli
+
+    failed = run_cli(args.input, args.output, args.visibility, fp16=args.fp16)
+    if failed:
+        raise SystemExit(1)
+
+
 def _cmd_gui(args) -> None:
     try:
         from .gui.app import launch
@@ -57,6 +65,18 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("-o", "--output", required=True, help="output file or folder")
     ap.add_argument("--seed", type=int, default=None, help="override config seed")
     ap.set_defaults(func=_cmd_apply)
+
+    fp = sub.add_parser("fog", help="add fog with Clear2Fog (Depth Pro depth + atmospheric scattering)",
+                        description="Add fog to images with Clear2Fog. Output: OUTPUT/foggy_<name>_vis_<v>.png")
+    fp.add_argument("-i", "--input", type=Path, nargs="+", required=True,
+                    help="input image(s) and/or folder(s) with .png/.jpg/.jpeg")
+    fp.add_argument("-o", "--output", type=Path, required=True, help="output folder")
+    fp.add_argument("-v", "--visibility", type=int, nargs="+", default=[100],
+                    help="visibility in metres, lower = denser fog (default 100); several values: one image each")
+    fp.add_argument("--fp16", action="store_true",
+                    help="run Depth Pro in float16: ~20x faster on an 8 GB GPU, results differ slightly "
+                         "from Clear2Fog (default float32 = identical)")
+    fp.set_defaults(func=_cmd_fog)
 
     gp = sub.add_parser("gui", help="launch the GUI")
     gp.add_argument("--host", default="127.0.0.1")

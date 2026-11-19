@@ -8,7 +8,7 @@ New category = new sub-folder with an __init__.py.
 """
 
 from .sensor import gaussian_noise  # noqa: F401
+from .weather import fog  # noqa: F401  (Clear2Fog; loads Depth Pro only when first used)
 
-# TODO: enable once the adapters are written
-# from .weather import fog          # noqa: F401
+# TODO: enable once the adapter is written
 # from .lens import lens_dirt       # noqa: F401

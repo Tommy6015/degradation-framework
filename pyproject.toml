@@ -13,11 +13,17 @@ dependencies = [
     "opencv-python>=4.10",
     "scipy>=1.11",
     "matplotlib>=3.8",
+    # used by third_party/Clear2Fog (Depth Pro + camera fog)
+    "torchvision==0.26.*",     # must match torch 2.11, CUDA build
+    "timm>=1.0",
+    "pillow-heif>=0.18",
+    "scikit-image>=0.24",
 ]
 
-# torch from the official CUDA 12.8 wheel index (GPU build), not the CPU build on PyPI
+# torch / torchvision from the official CUDA 12.8 wheel index (GPU build), not the CPU build on PyPI
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

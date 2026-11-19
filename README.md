@@ -1,16 +1,18 @@
-# My-Framework：图像退化生成框架
+# degradation-framework：图像退化生成框架
 
 用统一接口封装各种图像退化（雾、镜头脏污、水滴……），可单张或批量处理，参数和随机种子全程可复现。
 图形界面暂缓，等底层退化做好再接。
 
+仓库名用全称 `degradation-framework`；代码里用简写：Python 包名 `degradation_fw`（`import degradation_fw`），命令行命令 `degfw`。
+
 ## 目录结构：什么东西放哪里
 
 ```
-My-Framework/
+degradation-framework/
 ├── third_party/                 ① 开源代码原样放这里，一个仓库一个文件夹
 │   ├── README.md                   来源登记表 + 引入规则
-│   ├── <雾的仓库名>/
-│   └── <镜头脏污的仓库名>/
+│   ├── Clear2Fog/                  雾（Depth Pro 权重需单独下载，见登记表）
+│   └── camera_contamination_simulation/   镜头污染
 │
 ├── degradation_fw/              ② 你自己的框架代码
 │   ├── core/                       框架核心，一般不用动
@@ -24,7 +26,7 @@ My-Framework/
 │   ├── degradations/               ③ 适配器：把开源代码包装成统一接口，按类别分
 │   │   ├── _template.py              新退化照这个模板写
 │   │   ├── weather/                  天气 / 大气
-│   │   │   └── fog.py                  雾（待实现）
+│   │   │   └── fog.py                  雾：Clear2Fog 适配器 + `degfw fog` 命令
 │   │   ├── lens/                     镜头污染
 │   │   │   └── lens_dirt.py            脏污：不透明 + 水滴（待实现）
 │   │   └── sensor/                   传感器 / 成像
@@ -49,6 +51,21 @@ My-Framework/
 | 跑实验、出对比图的脚本 | `scripts/` |
 | 某次实验的参数组合 | `configs/xxx.yaml` |
 | 测试图片 / 生成的数据集 | `data/`、`outputs/` |
+
+## 加雾（Clear2Fog）
+
+和 Clear2Fog 的 `c2f.py` 一样，只需要输入、输出和能见度（米，越小雾越浓）：
+
+```bash
+uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
+```
+
+- `-v` 可以给多个值，例如 `-v 25 50 100 250 500`：每张图只估算一次景深，每个能见度各出一张。
+- 输出文件名同 `c2f.py`：`foggy_<原文件名>_vis_<能见度>.png`，直接放在输出文件夹里；另有 `fog_run.json` 记录参数。
+- 默认 float32，结果与原版 Clear2Fog **逐像素一致**。8 GB 显卡上 Depth Pro 显存不够，每张约 20 s；
+  加 `--fp16` 后每张约 1 s，与原版每个像素最多差 2/255。
+- 第一次使用前要放好 Depth Pro 权重 `depth_pro.pt`（约 1.9 GB，不在 git 里），位置见 `third_party/README.md`。
+- 在 YAML 流程里也可以用：`- name: fog` + `params: {visibility: 50, fp16: true}`。
 
 ## 添加一种退化（以雾为例）
 

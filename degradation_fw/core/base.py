@@ -22,6 +22,12 @@ class Degradation:
     description: ClassVar[str] = ""
     params: ClassVar[dict[str, Param]] = {}
 
+    @classmethod
+    def unavailable_reason(cls) -> str | None:
+        """None if the degradation can run here; otherwise why not (e.g. missing
+        model weights). Lets tests skip it instead of failing."""
+        return None
+
     def resolve_params(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         """Fill in defaults and validate. Unknown keys raise an error."""
         overrides = dict(overrides or {})

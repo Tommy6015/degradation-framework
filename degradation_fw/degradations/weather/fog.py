@@ -1,7 +1,277 @@
-"""雾 (fog) — 待实现。
+"""雾 (fog) — Clear2Fog (third_party/Clear2Fog).
 
-做法：
-  1. 把雾的开源代码原样放到 third_party/<repo名>/，在 third_party/README.md 登记，单独提交。
-  2. 照 degradations/_template.py 在本文件写适配器（参数如 浓度、类型 均匀/不均匀 ...）。
-  3. 在 degradations/__init__.py 里取消 `from .weather import fog` 的注释。
+Method (unchanged from Clear2Fog):
+  1. Depth Pro estimates a metric depth map (metres) from the single image.
+  2. Atmospheric light L: dark-channel prior, restricted to pixels >= 1000 m away
+     (the sky); its luminance is clipped to [162, 220] / 255 and used as grey.
+     If an image has no sky, the average L over (up to 100) images of the input
+     set is used, or 0.8 if none of them has sky either.
+  3. Koschmieder's law: t = exp(-beta * depth) with beta = -ln(0.05) / visibility,
+     foggy = clear * t + L * (1 - t).
+  Fog density is set by the visibility (meteorological optical range) in metres:
+  lower = denser fog.
+
+Two ways to use it:
+  - command line, like Clear2Fog's c2f.py (only input, output, visibility):
+        uv run degfw fog -i INPUT -o OUTPUT -v 100
+  - as the registered degradation "fog" in a pipeline (param: visibility).
+
+Differences to running c2f.py, none of which change the fog itself:
+  - The average atmospheric light (only used for images without sky) is computed
+    only when such an image comes up, from a sample drawn with a fixed seed
+    (c2f.py: always at start, unseeded sample). With <= 100 input images the
+    sample is all images, as in c2f.py.
+  - Several visibilities in one run reuse the depth map of each image.
+  - Clear2Fog's package __init__ is bypassed, so its LiDAR part (and PyQt5) is
+    not needed.
 """
+
+from __future__ import annotations
+
+import contextlib
+import importlib
+import json
+import os
+import random
+import sys
+import tempfile
+import time
+import types
+from pathlib import Path
+
+import numpy as np
+
+from degradation_fw.core.base import Degradation
+from degradation_fw.core.io import to_uint8
+from degradation_fw.core.params import Bool, Int
+from degradation_fw.core.paths import THIRD_PARTY_DIR
+from degradation_fw.core.registry import register
+
+C2F_ROOT = THIRD_PARTY_DIR / "Clear2Fog"
+CHECKPOINT = C2F_ROOT / "src" / "fog_pipeline" / "depth_map" / "depth_pro" / "checkpoints" / "depth_pro.pt"
+CHECKPOINT_URL = "https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt"
+MIN_SKY_DEPTH = 1000  # metres; c2f.py's min_depth for the atmospheric light
+MAX_AVG_SAMPLES = 100  # as in FogCamera.__init__
+SAMPLE_SEED = 0  # seed for picking the images that the average atmospheric light is computed from
+
+
+def checkpoint_missing() -> str | None:
+    if CHECKPOINT.is_file():
+        return None
+    return f"Depth Pro checkpoint not found: {CHECKPOINT}\nDownload it from {CHECKPOINT_URL}"
+
+
+@contextlib.contextmanager
+def _cwd(path: Path):
+    old = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(old)
+
+
+def _import_clear2fog():
+    """Import Clear2Fog's Depth Pro and camera fog modules without running
+    src/fog_pipeline/__init__.py (which also imports the LiDAR part and PyQt5)."""
+    for name, folder in (("src", C2F_ROOT / "src"), ("src.fog_pipeline", C2F_ROOT / "src" / "fog_pipeline")):
+        existing = sys.modules.get(name)
+        if existing is None:
+            module = types.ModuleType(name)
+            module.__path__ = [str(folder)]
+            sys.modules[name] = module
+        elif str(folder) not in list(getattr(existing, "__path__", [])):
+            raise ImportError(f"A different package named {name!r} is already imported ({existing!r})")
+    depth_generation = importlib.import_module("src.fog_pipeline.depth_map.depth_generation")
+    camera_fog = importlib.import_module("src.fog_pipeline.simulate_fog.camera.camera_fog_simulation")
+    depth_pro_utils = importlib.import_module("src.fog_pipeline.depth_map.depth_pro.utils")
+    return depth_generation.DepthGenerator, camera_fog.FogCamera, depth_pro_utils.load_rgb
+
+
+class Clear2Fog:
+    """Loaded Depth Pro model + Clear2Fog's FogCamera. Load once, reuse (see engine()).
+
+    fp16=False (default): float32 as in c2f.py, identical results. On an 8 GB GPU
+    Depth Pro then needs ~8 GB and spills into system memory (~20 s per image).
+    fp16=True: half precision (as Apple's own Depth Pro CLI uses on GPU), ~1 s per
+    image and ~3.7 GB; depth differs by ~0.1 % (median), so the fog differs slightly.
+    """
+
+    def __init__(self, fp16: bool = False):
+        import torch
+
+        missing = checkpoint_missing()
+        if missing:
+            raise FileNotFoundError(missing)
+        DepthGenerator, FogCamera, self._load_rgb = _import_clear2fog()
+        self.fp16 = fp16
+        t = time.time()
+        # Depth Pro's checkpoint path is relative to the Clear2Fog root
+        with _cwd(C2F_ROOT):
+            self.depth = DepthGenerator(precision=torch.float16 if fp16 else torch.float32)
+        # FogCamera.__init__ would run Depth Pro on up to 100 images of a folder to
+        # average the atmospheric light. Give it an empty folder (-> its fallback
+        # 0.8) and set the average later, only if an image without sky needs it.
+        with tempfile.TemporaryDirectory() as empty:
+            self.fog = FogCamera(self.depth, empty, min_depth=MIN_SKY_DEPTH)
+        self.fallback_light = self.fog.avg_atmospheric_light.copy()
+        print(f"Clear2Fog: Depth Pro loaded on {self.depth.device} ({'float16' if fp16 else 'float32'}) "
+              f"in {time.time() - t:.1f} s")
+
+    # ---- depth -----------------------------------------------------------------
+    def depth_from_path(self, path: str | Path) -> np.ndarray:
+        """As c2f.py: Depth Pro reads the file itself (uses the EXIF focal length if present).
+        float32 out also with fp16, so the fog formula is computed in float32."""
+        return self.depth.run(str(path)).astype(np.float32, copy=False)
+
+    def depth_from_array(self, rgb_u8: np.ndarray) -> np.ndarray:
+        """Same as DepthGenerator.run, for an image in memory (no EXIF, so the focal
+        length is estimated by Depth Pro)."""
+        prediction = self.depth.model.infer(self.depth.transform(rgb_u8), f_px=None)
+        return prediction["depth"].cpu().detach().float().numpy()
+
+    # ---- atmospheric light -----------------------------------------------------
+    def sky_light(self, rgb_u8: np.ndarray, depth: np.ndarray):
+        """Atmospheric light from the sky of this image, or None if it has no sky."""
+        return self.fog.estimate_atmospheric_light(rgb_u8, depth, min_depth=MIN_SKY_DEPTH)
+
+    def set_average_light(self, image_paths: list[Path]) -> tuple[np.ndarray, int]:
+        """As FogCamera.__init__: average sky light over up to 100 images (seeded sample).
+        Returns (light, number of images that had sky)."""
+        paths = list(image_paths)
+        if len(paths) > MAX_AVG_SAMPLES:
+            paths = random.Random(SAMPLE_SEED).sample(paths, MAX_AVG_SAMPLES)
+        lights = []
+        for p in paths:
+            rgb = self.read_rgb(p)
+            light = self.sky_light(rgb, self.depth_from_path(p))
+            if light is not None:
+                lights.append(light)
+        if lights:
+            self.fog.avg_atmospheric_light = np.mean(lights, axis=0)
+        else:
+            self.fog.avg_atmospheric_light = self.fallback_light.copy()
+        return self.fog.avg_atmospheric_light, len(lights)
+
+    # ---- fog -------------------------------------------------------------------
+    def simulate(self, rgb_u8: np.ndarray, depth: np.ndarray, visibility: float) -> np.ndarray:
+        """Clear2Fog's FogCamera.simulate, as called in c2f.py. uint8 RGB in and out."""
+        return self.fog.simulate(rgb_u8, rgb_u8, depth, visibility=visibility, min_depth=MIN_SKY_DEPTH)
+
+    @staticmethod
+    def read_rgb(path: str | Path) -> np.ndarray:
+        from PIL import Image
+
+        with Image.open(path) as im:  # as c2f.py
+            return np.array(im.convert("RGB"))
+
+
+_ENGINE: Clear2Fog | None = None
+
+
+def engine(fp16: bool = False) -> Clear2Fog:
+    """The shared Clear2Fog instance (Depth Pro is ~1.9 GB, load it only once).
+    Asking for the other precision replaces it (only one model in GPU memory)."""
+    global _ENGINE
+    if _ENGINE is None or _ENGINE.fp16 != fp16:
+        _ENGINE = None  # free the old model first
+        _ENGINE = Clear2Fog(fp16=fp16)
+    return _ENGINE
+
+
+@register
+class Fog(Degradation):
+    name = "fog"
+    label = "雾 Fog (Clear2Fog)"
+    description = ("Clear2Fog: Depth Pro monocular depth + atmospheric scattering model. "
+                   "Lower visibility = denser fog.")
+    params = {
+        "visibility": Int(default=100, min=5, max=2000, step=5, label="能见度 visibility (m)",
+                          help="Meteorological optical range in metres; lower = denser fog"),
+        "fp16": Bool(default=False, label="半精度 fp16 (快约 20 倍，结果略有差异)",
+                     help="Run Depth Pro in float16: much faster on GPU, depth differs by ~0.1 %"),
+    }
+
+    @classmethod
+    def unavailable_reason(cls) -> str | None:
+        return checkpoint_missing()
+
+    def apply(self, image, rng, visibility, fp16):
+        # Deterministic: no randomness involved, rng is not used.
+        # A single image has no input set to average over, so an image without sky
+        # uses Clear2Fog's fallback light (0.8). The `degfw fog` command averages.
+        c2f = engine(fp16)
+        rgb = to_uint8(image)
+        foggy = c2f.simulate(rgb, c2f.depth_from_array(rgb), visibility)
+        return foggy.astype(np.float32) / 255.0
+
+
+# ---- command line: degfw fog -i INPUT -o OUTPUT -v VISIBILITY ------------------------
+INPUT_EXTS = {".png", ".jpg", ".jpeg"}  # as c2f.py
+
+
+def collect_inputs(inputs: list[Path]) -> list[Path]:
+    """Files as given; folders: their .png / .jpg / .jpeg files (not subfolders), as c2f.py."""
+    images = []
+    for p in inputs:
+        p = Path(p)
+        if p.is_dir():
+            images += sorted(q for q in p.iterdir() if q.is_file() and q.suffix.lower() in INPUT_EXTS)
+        elif p.is_file():
+            images.append(p)
+        else:
+            raise FileNotFoundError(f"Not found: {p}")
+    return list(dict.fromkeys(images))
+
+
+def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bool = False) -> int:
+    """Fog every input image at every visibility. Output names as in c2f.py:
+    <out>/foggy_<name>_vis_<v>.png. Returns the number of failed images."""
+    from PIL import Image
+
+    try:
+        images = collect_inputs(inputs)
+    except FileNotFoundError as e:
+        raise SystemExit(str(e)) from None
+    if not images:
+        raise SystemExit("No input images found (.png / .jpg / .jpeg)")
+    bad = [v for v in visibilities if v <= 0]
+    if bad:
+        raise SystemExit(f"Visibility must be > 0 m, got {bad}")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"{len(images)} image(s), visibility: {', '.join(f'{v} m' for v in visibilities)}")
+
+    c2f = engine(fp16)
+    average_done = False
+    record = {"method": "Clear2Fog", "visibility_m": visibilities,
+              "depth_pro_precision": "float16" if fp16 else "float32", "images": {}}
+    failed = 0
+    for i, path in enumerate(images, start=1):
+        t = time.time()
+        try:
+            rgb = c2f.read_rgb(path)
+            depth = c2f.depth_from_path(path)
+            light = c2f.sky_light(rgb, depth)
+            if light is None and not average_done:
+                avg, n_sky = c2f.set_average_light(images)
+                average_done = True
+                record["average_light"] = {"value": [round(float(x), 4) for x in avg], "images_with_sky": n_sky}
+                print(f"  (no sky in {path.name}: average atmospheric light over the input set = "
+                      f"{np.round(avg, 3).tolist()}, from {n_sky} image(s) with sky)")
+            for v in visibilities:
+                foggy = c2f.simulate(rgb, depth, v)
+                Image.fromarray(foggy).save(out_dir / f"foggy_{path.stem}_vis_{v}.png")
+            record["images"][path.name] = {
+                "source": str(path),
+                "atmospheric_light": "sky" if light is not None else "average of input set",
+                "depth_m": {"min": round(float(depth.min()), 2), "median": round(float(np.median(depth)), 2)},
+            }
+            print(f"[{i}/{len(images)}] {path.name}: {time.time() - t:.1f} s"
+                  + ("" if light is not None else "  (no sky -> average light)"))
+        except Exception as e:  # keep going, like c2f.py
+            failed += 1
+            print(f"[{i}/{len(images)}] {path.name}: FAILED: {e}")
+    (out_dir / "fog_run.json").write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Done: {len(images) - failed} of {len(images)} image(s) -> {out_dir}")
+    return failed

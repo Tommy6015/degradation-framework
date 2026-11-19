@@ -17,10 +17,19 @@ def test_registry_lists_example():
     assert "gaussian_noise" in available()
 
 
+def usable(name):
+    """get(name), or skip the test if it can't run here (e.g. model weights missing)."""
+    deg = get(name)
+    reason = deg.unavailable_reason()
+    if reason:
+        pytest.skip(f"{name}: {reason}")
+    return deg
+
+
 @pytest.mark.parametrize("name", available())
 def test_every_degradation_follows_contract(name, image):
     """Each registered degradation keeps shape/dtype/range and doesn't modify input."""
-    deg = get(name)
+    deg = usable(name)
     original = image.copy()
     out = deg(image, np.random.default_rng(0))
     assert out.shape == image.shape
@@ -31,7 +40,7 @@ def test_every_degradation_follows_contract(name, image):
 
 @pytest.mark.parametrize("name", available())
 def test_every_degradation_is_reproducible(name, image):
-    deg = get(name)
+    deg = usable(name)
     a = deg(image, np.random.default_rng(7))
     b = deg(image, np.random.default_rng(7))
     np.testing.assert_array_equal(a, b)
@@ -81,3 +90,14 @@ def test_gui_builds():
         pytest.skip("gradio not installed (only a leftover package dir)")
     from degradation_fw.gui.app import build_app
     build_app()
+
+
+def test_fog_denser_at_lower_visibility():
+    """Clear2Fog: lower visibility -> more fog -> less contrast left in the image."""
+    fog = usable("fog")
+    rng = np.random.default_rng(0)
+    # a simple scene: sky-like bright top half, textured bottom half
+    img = np.concatenate([np.full((48, 96, 3), 0.85, np.float32),
+                          rng.random((48, 96, 3), dtype=np.float32) * 0.6], axis=0)
+    contrast = [fog(img, visibility=v).std() for v in (500, 100, 20)]
+    assert contrast[0] > contrast[1] > contrast[2]
