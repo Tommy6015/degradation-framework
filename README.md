@@ -8,7 +8,8 @@
 这是一个**工作区**：在仓库里用 `uv run` 运行，不是可以 `pip install` 到别处的库
 （代码按源码位置找 `third_party/`，打成 wheel 单独安装后找不到）。
 
-这个 README 只讲整个项目；路线图、系统架构图、关键决策记录、每周状态和各退化的详细用法在 [`doc/`](doc/README.md)。
+这个 README 只讲整个项目；路线图、系统架构图、关键决策记录、每周状态和各退化的详细用法在 [`doc/`](doc/README.md)，
+英文版在 [`doc_EN/`](doc_EN/README.md)（以 `doc/` 为准）。
 
 ## 目录结构：什么东西放哪里
 
@@ -53,6 +54,7 @@ degradation-framework/
 │   ├── decisions/                  关键决策记录，一个决定一个文件
 │   ├── status/                     每周状态，一周一个文件
 │   └── degradations/               各退化的详细用法
+├── doc_EN/                         doc/ 的英文版，结构相同（以 doc/ 为准）
 ├── tests/                          测试
 │   ├── test_*.py                     框架本身；test_contract.py 自动检查每个已注册的退化
 │   ├── degradations/test_<名字>.py   每个退化自己的测试
