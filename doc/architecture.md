@@ -280,7 +280,7 @@ sequenceDiagram
 
 | 类别 | 是什么 | 每次运行会变吗 | 从哪里给 |
 |---|---|---|---|
-| **输入数据** | 图片：单个文件或文件夹（连子文件夹），支持 .png .jpg .jpeg .bmp .tif .tiff .webp。以后还有 TUMTraf 的标注（M5 / M6） | 会 | `-i` |
+| **输入数据** | 图片：单个文件或文件夹（连子文件夹），支持 .png .jpg .jpeg .bmp .tif .tiff .webp。以后经数据集适配器读入各种数据集的序列和标注（M6，第一个示例是 TUMTraf A9） | 会 | `-i` |
 | **配置** | 用哪些退化、各自的参数、种子 | 会 | 配置文件 `configs/*.yaml`（`degfw apply -c`）。`degfw run 名字 -p 参数=值 --seed N` 和 GUI 控件是同一类东西的简便写法 |
 | **资源** | 模型权重（`third_party/weights.yaml`）、代码版本和依赖（git 提交、`uv.lock`） | 不会，属于运行环境 | `uv sync`、`uv run degfw weights --download` |
 | **输出位置** | 结果写到哪里 | 会 | `-o` |
@@ -351,7 +351,9 @@ outputs/fog/
 
 ### 4.4 现在还做不到的
 
-- **只处理图片，不读标注**：TUMTraf 的标注怎么跟着退化后的图片一起输出，是 M5 / M6 的事（见 [roadmap.md](roadmap.md)）。
+- **只处理图片，不读标注，也不处理序列**：各种数据集的序列和标注怎么经数据集适配器读入、怎么跟着退化后的图片一起输出，
+  是 M6 的事（第一个示例是 TUMTraf A9）；
+  序列里各帧的退化保持一致是 M3 的事（见 [roadmap.md](roadmap.md)、[requirements.md](requirements.md) 的 F1、F6、F8）。
 - **退化只能输出一张图**：镜头污染的 mask 还输出不了，这是 M3 要先决定的接口问题。
 
 ## 5. 贯穿各模块的约定
