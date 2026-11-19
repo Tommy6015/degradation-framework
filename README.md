@@ -5,52 +5,65 @@
 
 仓库名用全称 `degradation-framework`；代码里用简写：Python 包名 `degradation_fw`（`import degradation_fw`），命令行命令 `degfw`。
 
+这是一个**工作区**：在仓库里用 `uv run` 运行，不是可以 `pip install` 到别处的库
+（代码按源码位置找 `third_party/`，打成 wheel 单独安装后找不到）。
+
 ## 目录结构：什么东西放哪里
 
 ```
 degradation-framework/
 ├── third_party/                 ① 开源代码原样放这里，一个仓库一个文件夹
-│   ├── README.md                   来源登记表 + 引入规则
-│   ├── Clear2Fog/                  雾（Depth Pro 权重需单独下载，见登记表）
+│   ├── README.md                   引入规则 + 来源登记表（每个仓库一行）
+│   ├── weights.yaml                所有模型权重：路径、大小、SHA-256、下载地址
+│   ├── Clear2Fog/                  雾（Depth Pro 权重不在 git 里，用 degfw weights --download 下载）
+│   │   └── LOCAL_CHANGES.md          引入了哪些文件、改了什么
 │   └── camera_contamination_simulation/   镜头污染
+│       └── LOCAL_CHANGES.md
 │
 ├── degradation_fw/              ② 你自己的框架代码
 │   ├── core/                       框架核心，一般不用动
-│   │   ├── base.py                   Degradation 基类（统一接口）
+│   │   ├── base.py                   Degradation 基类（统一接口，声明需要的依赖和权重）
 │   │   ├── params.py                 参数类型 Float / Int / Choice / Bool
-│   │   ├── registry.py               注册表
+│   │   ├── registry.py               注册表（退化 + 退化自带的命令）
 │   │   ├── pipeline.py               多个退化串联、批量处理、保存元数据
 │   │   ├── io.py                     图片读写、格式转换（支持中文路径）
-│   │   └── paths.py                  项目路径；use_third_party() 导入开源代码
+│   │   ├── paths.py                  项目路径；加载 third_party 代码的唯一入口
+│   │   └── weights.py                读 weights.yaml：查找、校验、下载权重
 │   │
 │   ├── degradations/               ③ 适配器：把开源代码包装成统一接口，按类别分
 │   │   ├── _template.py              新退化照这个模板写
 │   │   ├── weather/                  天气 / 大气
-│   │   │   └── fog.py                  雾：Clear2Fog 适配器 + `degfw fog` 命令
+│   │   │   └── fog.py                  雾：Clear2Fog 适配器 + 它自己注册的 `degfw fog` 命令
 │   │   ├── lens/                     镜头污染
 │   │   │   └── lens_dirt.py            脏污：不透明 + 水滴（待实现）
 │   │   └── sensor/                   传感器 / 成像
 │   │       └── gaussian_noise.py       高斯噪声（示例，验证框架用）
 │   │
 │   ├── gui/                        界面（暂缓；已有一个能跑的 Gradio 初版）
-│   └── cli.py                      命令行入口
+│   └── cli.py                      命令行入口（不含任何具体退化的代码）
 │
 ├── configs/                     ④ 参数预设（YAML），一次实验一个文件
-├── scripts/                     ⑤ 自己的试验 / 一次性脚本
-├── tests/                          测试：自动检查每个已注册的退化
+├── scripts/                     ⑤ 自己的试验脚本和工具
+│   └── contamination_examples.py   镜头污染的运行脚本（选项见 scripts/README.md）
+├── tests/                          测试
+│   ├── test_*.py                     框架本身；test_contract.py 自动检查每个已注册的退化
+│   ├── degradations/test_<名字>.py   每个退化自己的测试
+│   └── data/                         回归测试用的小图
 ├── data/                           输入图片（不提交到 git）
 └── outputs/                        输出结果（不提交到 git）
 ```
 
 | 你手上的东西 | 放哪里 |
 |---|---|
-| 下载的开源代码 | `third_party/<仓库名>/`，原样放，保留 LICENSE |
-| 开源代码自带的纹理、mask、模型权重 | 跟着它留在 `third_party/<仓库名>/` 里 |
+| 下载的开源代码 | `third_party/<仓库名>/`，原样放，保留 LICENSE，在 `third_party/README.md` 登记 |
+| 开源代码需要的 Python 包 | `pyproject.toml` 里这个仓库的 dependency group |
+| 开源代码的模型权重 | 文件跟着它留在 `third_party/<仓库名>/` 里，并在 `third_party/weights.yaml` 登记一条 |
 | 对开源代码的调整（格式转换、参数换算） | `degradation_fw/degradations/<类别>/xxx.py` 适配器里 |
-| 必须直接改开源代码本身 | 在 `third_party/` 里改，单独提交，并在登记表里注明 |
-| 跑实验、出对比图的脚本 | `scripts/` |
+| 必须直接改开源代码本身 | 在 `third_party/` 里改，单独提交，写进它的 `LOCAL_CHANGES.md`；改动大的提交到 fork 后重新引入 |
+| 自己写的、用开源代码的脚本或工具 | `scripts/`（不放进 `third_party/`） |
 | 某次实验的参数组合 | `configs/xxx.yaml` |
-| 测试图片 / 生成的数据集 | `data/`、`outputs/` |
+| 测试用的小图、参考结果 | `tests/data/` |
+| 输入图片 / 生成的数据集 | `data/`、`outputs/` |
 
 ## 加雾（Clear2Fog）
 
@@ -64,26 +77,38 @@ uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
 - 输出文件名同 `c2f.py`：`foggy_<原文件名>_vis_<能见度>.png`，直接放在输出文件夹里；另有 `fog_run.json` 记录参数。
 - 默认 float32，结果与原版 Clear2Fog **逐像素一致**。8 GB 显卡上 Depth Pro 显存不够，每张约 20 s；
   加 `--fp16` 后每张约 1 s，与原版每个像素最多差 2/255。
-- 第一次使用前要放好 Depth Pro 权重 `depth_pro.pt`（约 1.9 GB，不在 git 里），位置见 `third_party/README.md`。
-- 在 YAML 流程里也可以用：`- name: fog` + `params: {visibility: 50, fp16: true}`。
+- 第一次使用前下载 Depth Pro 权重（约 1.9 GB，不在 git 里）：`uv run degfw weights --download`。
+- 和其他退化一样也可以用 `uv run degfw run fog -i 输入 -o 输出 -p visibility=50`，
+  或在 YAML 流程里：`- name: fog` + `params: {visibility: 50, fp16: true}`。
 
-## 添加一种退化（以雾为例）
+## 添加一种退化
 
 1. 把开源代码原样复制到 `third_party/<仓库名>/`，在 `third_party/README.md` 登记来源，**单独提交一次**。
-2. 照 `degradations/_template.py` 写 `degradations/weather/fog.py`。
-3. 在 `degradations/__init__.py` 里取消 `from .weather import fog` 的注释。
-4. 运行 `uv run pytest`，测试会自动检查它的输出格式和可复现性。
+2. 它需要的 Python 包：在 `pyproject.toml` 里加一个 dependency group，然后 `uv lock`。
+   模型权重：在 `third_party/weights.yaml` 里每个文件登记一条，然后 `uv run degfw weights --download`。
+3. 照 `degradations/_template.py` 写适配器，例如 `degradations/weather/rain.py`：
+   用 `requires_modules` / `requires_weights` 声明需要什么，第三方代码只通过 `core/paths.py` 的函数、并且在用到时才加载。
+4. 在 `degradations/__init__.py` 里加上 `from .weather import rain`。
+   之后 `degfw list`、`degfw run rain`、配置文件和 GUI 都能直接用它，不用改别处。
+5. 在 `tests/degradations/test_rain.py` 写它自己的测试；运行 `uv run pytest`，
+   `test_contract.py` 还会自动检查它的输出格式和可复现性。
 
 ## 环境与使用
 
 用 [uv](https://docs.astral.sh/uv/) 管理环境：
 
 ```bash
-uv sync
-uv run pytest
-uv run degfw list
-uv run degfw apply -c configs/example.yaml -i data/input -o outputs/run1
+uv sync                             # 装好全部依赖（每个 third_party 仓库一组，默认全装）
+uv run degfw weights --download     # 下载缺的模型权重；不加参数只查看状态，--verify 校验 SHA-256
+uv run degfw list                   # 所有退化、参数，以及在这台机器上能不能运行
+uv run degfw run gaussian_noise -i 输入 -o 输出 -p sigma=0.1          # 单个退化
+uv run degfw apply -c configs/example.yaml -i data/input -o outputs/run1   # 按配置串联多个退化
+uv run pytest                       # 全部测试（含需要 GPU 和模型的，约 1.5 分钟）
+uv run pytest -m "not slow"         # 只跑不需要模型的，不到 1 秒
 ```
+
+不想装某个仓库的依赖时，`uv sync` 和 `uv run` 都加 `--no-group <组名>`（组名见 `third_party/README.md`；
+只给 `uv sync` 加的话，下一次 `uv run` 会按默认把它装回来）。它的退化会在 `degfw list` 里标为不可用，测试自动跳过。
 
 每张输出图旁边都会生成一个同名 `.json`，记录所用的退化、参数和随机种子。
 
