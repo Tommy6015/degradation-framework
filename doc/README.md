@@ -13,6 +13,9 @@
 
 约定：
 
-- 图用 [Mermaid](https://mermaid.js.org/) 写在 Markdown 里（VS Code 装了 Mermaid 扩展可以预览，GitHub 上直接显示）。
+- 图用 [Mermaid](https://mermaid.js.org/) 写在 Markdown 里（VS Code 装了 Mermaid 扩展可以预览，GitHub 上直接显示）。画图时：
+  - 框里只写名字，一行几个字；详细说明写在图下面的表格里。中文长句放在框里，预览时会被截断或折行。
+  - 流程图（`flowchart`）和类图（`classDiagram`）第一行照 `architecture.md` 里的写法加 `%%{init: ...}%%`，关掉 `htmlLabels`：
+    文字由 Mermaid 自己排版，大小不受预览样式影响。
 - 周的编号用 ISO 周（周一开始）：`uv run python -c "import datetime; print(datetime.date.today().isocalendar())"`。
 - 文档里提到代码、提交、决策时写上文件名、提交号或决策编号，方便查回去。

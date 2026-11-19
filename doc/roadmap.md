@@ -12,23 +12,24 @@
 ## 论文项目总体架构
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
     subgraph S1["① 数据来源"]
-        tum[("TUMTraf 数据集<br/>路侧 / 车路协同场景的图像和标注")]
+        tum[("TUMTraf 数据集")]
     end
 
-    subgraph S2["② 退化生成：degradation-framework（本仓库）"]
-        core["统一接口与流程<br/>参数校验 · 每图种子 · 批量处理 · 元数据"]
-        fog["雾<br/>Clear2Fog：单目景深 + 大气散射"]
-        noise["高斯噪声<br/>示例，验证框架用"]
-        lens["镜头污染<br/>不透明 / 半透明污渍、水滴"]
-        more["更多退化（候选）<br/>雨、合成雾、物理镜头脏污"]
+    subgraph S2["② 退化生成：degradation-framework"]
+        core["统一接口与流程"]
+        fog["雾<br/>Clear2Fog"]
+        noise["高斯噪声<br/>（示例）"]
+        lens["镜头污染"]
+        more["更多退化<br/>（候选）"]
     end
 
     subgraph S3["③ 退化数据集 / 基准"]
-        ds["退化图像<br/>退化类型 × 强度等级"]
-        ann["标注与元数据<br/>原标注 + 退化类型、参数、种子<br/>+ 污染 mask"]
-        bench["基准<br/>数据划分、评测协议"]
+        ds["退化图像<br/>类型 × 强度"]
+        ann["标注与元数据"]
+        bench["基准<br/>划分 · 评测协议"]
     end
 
     subgraph S4["④ 下游任务验证"]
@@ -37,26 +38,22 @@ flowchart TB
     end
 
     subgraph S5["⑤ 评测与分析"]
-        eva["各退化类型、强度下的性能<br/>与干净数据对比"]
+        eva["性能对比分析"]
         paper["论文"]
     end
 
-    tum -.->|"读入图像和标注"| core
     core --> fog
     core --> noise
     core -.-> lens
     core -.-> more
-    fog -.-> ds
-    lens -.-> ds
-    more -.-> ds
-    ds -.- ann
     ds -.-> bench
     ann -.-> bench
-    bench -.-> det
-    bench -.-> coop
-    det -.-> eva
-    coop -.-> eva
     eva -.-> paper
+
+    S1 -.->|"读入图像和标注"| S2
+    S2 -.->|"批量生成"| S3
+    S3 -.->|"验证"| S4
+    S4 -.->|"检测结果"| S5
 
     classDef done fill:#E8F5E9,stroke:#43A047,color:#12361A
     classDef wip fill:#FFF3E0,stroke:#FB8C00,color:#4A2B00,stroke-dasharray:5 3
@@ -68,15 +65,22 @@ flowchart TB
     class tum data
 ```
 
-| 样式 | 含义 |
-|---|---|
-| 绿色实线框 | 已完成 |
-| 橙色虚线框 | 进行中 |
-| 灰色虚线框 | 计划中 |
-| 蓝色框 | 外部数据 |
-| 实线箭头 / 虚线箭头 | 已经打通的数据流 / 计划中的数据流 |
+图例：绿色实线框 = 已完成；橙色虚线框 = 进行中；灰色虚线框 = 计划中；蓝色 = 外部数据。
+实线箭头 = 已经打通的数据流；虚线箭头 = 计划中的数据流。
 
-各阶段对应的里程碑：② = M1–M4，① 接入 = M5，③ = M6，④ = M7，⑤ = M8。
+| 部分 | 说明 | 状态（里程碑） |
+|---|---|---|
+| TUMTraf 数据集 | 路侧 / 车路协同场景的图像和标注，作为干净图像的来源 | 外部数据，接入计划中（M5） |
+| 统一接口与流程 | 参数校验、每图种子、批量处理、元数据 | 已完成（M0、M2） |
+| 雾 | Clear2Fog：单目景深 + 大气散射模型 | 已完成（M1） |
+| 高斯噪声 | 示例，用来验证框架 | 已完成 |
+| 镜头污染 | 不透明污渍、半透明污渍、水滴 | 进行中（M3） |
+| 更多退化 | 候选：雨、另一种合成雾、物理镜头脏污 | 计划中（M4） |
+| 退化图像 | 按退化类型 × 强度等级生成 | 计划中（M6） |
+| 标注与元数据 | 原标注 + 退化类型、参数、种子 + 污染 mask | 计划中（M6） |
+| 基准 | 数据划分、评测协议 | 计划中（M6） |
+| 2D 车辆检测、车路协同感知 | 在基准上验证 | 计划中（M7） |
+| 性能对比分析 | 各退化类型、强度下的性能，与干净数据对比 | 计划中（M8） |
 
 ## 里程碑
 

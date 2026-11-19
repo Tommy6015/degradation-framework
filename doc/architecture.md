@@ -13,41 +13,42 @@
 ## 1. 分层结构
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
     subgraph L1["入口层"]
         cli["cli.py<br/>degfw 命令"]
         main["__main__.py<br/>python -m"]
-        gui["gui/app.py<br/>Gradio，可选"]
+        gui["gui/app.py<br/>（可选）"]
         scripts["scripts/<br/>试验脚本"]
     end
 
     subgraph L2["框架核心 core/"]
-        pipeline["pipeline.py<br/>串联、批量、元数据"]
+        pipeline["pipeline.py<br/>串联 · 批量"]
         registry["registry.py<br/>注册表"]
-        base["base.py<br/>Degradation 基类"]
+        base["base.py<br/>基类"]
         params["params.py<br/>参数类型"]
         io["io.py<br/>图片读写"]
         weights["weights.py<br/>权重清单"]
-        paths["paths.py<br/>第三方加载入口"]
+        paths["paths.py<br/>第三方加载"]
     end
 
     subgraph L3["适配器 degradations/"]
         fog["weather/fog.py"]
-        noise["sensor/gaussian_noise.py"]
+        noise["sensor/<br/>gaussian_noise.py"]
         lens["lens/lens_dirt.py<br/>待实现"]
     end
 
     subgraph L4["第三方代码 third_party/"]
         c2f["Clear2Fog/"]
-        ccs["camera_contamination_simulation/"]
+        ccs["camera_contamination_<br/>simulation/"]
         wyaml["weights.yaml"]
     end
 
     L1 -->|"«use»"| L2
-    L3 -->|"«use» 继承基类、注册"| L2
-    L2 -.->|"«import» 第一次查询时，触发注册"| L3
-    L3 -.->|"«import» 用到时才加载，经 core/paths.py"| L4
-    L1 -.->|"«import» 脚本直接使用，经 core/paths.py"| L4
+    L3 -->|"«use»"| L2
+    L2 -.->|"«import» 注册"| L3
+    L3 -.->|"«import» 按需"| L4
+    L1 -.->|"«import» 按需"| L4
 
     classDef layer1 fill:#E3F2FD,stroke:#1E88E5,color:#0D2A4A
     classDef layer2 fill:#E8F5E9,stroke:#43A047,color:#12361A
@@ -60,6 +61,7 @@ flowchart TB
 ```
 
 图例：实线 = 启动时就导入；虚线 = 运行时第一次用到才导入。
+箭头上的字：«use» = 调用、继承下一层；«import» 注册 = 第一次查询时导入适配器，触发注册；«import» 按需 = 用到时才经 `core/paths.py` 加载第三方代码。
 
 - **核心层**不依赖任何具体退化，也不依赖 `third_party/`：`registry.py` 只在第一次查询时导入 `degradations` 包来触发注册。
   所以只装核心依赖（不装 torch 等）时，框架和快速测试照样能运行。
@@ -93,6 +95,7 @@ flowchart TB
 ## 2. 核心类
 
 ```mermaid
+%%{init: {"htmlLabels": false, "class": {"htmlLabels": false}}}%%
 classDiagram
     direction TB
 
@@ -117,7 +120,6 @@ classDiagram
     }
     Degradation <|-- Fog
     Degradation <|-- GaussianNoise
-    note for Degradation "子类实现 apply()；只能用传入的 rng"
 
     class Param {
         <<dataclass>>
@@ -145,7 +147,7 @@ classDiagram
         +params: dict
     }
     Pipeline "1" *-- "*" Step
-    Pipeline ..> Degradation : 按名字从注册表取
+    Pipeline ..> Degradation : 按名字取
 
     class registry {
         <<module>>
@@ -155,7 +157,7 @@ classDiagram
         +register_command(name)
         +commands() list
     }
-    registry o-- Degradation : 已注册的子类
+    registry o-- Degradation : 已注册
 
     class Clear2Fog {
         +load(path) tuple
@@ -164,7 +166,7 @@ classDiagram
         +set_average_light(paths)
         +simulate(rgb, depth, visibility) ndarray
     }
-    Fog ..> Clear2Fog : engine()，只加载一次
+    Fog ..> Clear2Fog : engine()
 
     class Weight {
         <<dataclass>>
@@ -178,7 +180,9 @@ classDiagram
     Degradation ..> Weight : requires_weights
 ```
 
-- `Degradation.__call__(image, rng, **params)` 先补默认值、校验参数（`resolve_params`），再调用子类的 `apply`，最后把结果限制在 `[0, 1]`。
+- `Degradation` 是抽象基类，子类实现 `apply()`，随机数只能用传入的 `rng`。
+  `Degradation.__call__(image, rng, **params)` 先补默认值、校验参数（`resolve_params`），再调用子类的 `apply`，最后把结果限制在 `[0, 1]`。
+- `Pipeline` 按步骤名从注册表取到退化（`registry.get`）；`registry` 保存所有已注册的子类。
 - `Clear2Fog` 是 `weather/fog.py` 里对第三方代码的封装（Depth Pro 模型 + `FogCamera`），由 `engine()` 只创建一次，供 `Fog` 和 `degfw fog` 共用。
 
 ## 3. 运行时流程
@@ -226,13 +230,13 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    actor U as 用户
+    actor UF as 用户
     participant F as fog.run_cli
     participant E as Clear2Fog 封装
     participant DP as Depth Pro
     participant FC as FogCamera
 
-    U->>F: degfw fog -i 输入 -o 输出 -v 能见度
+    UF->>F: degfw fog -i 输入 -o 输出 -v 能见度
     F->>F: collect_inputs、unique_stems（同名加 _2）
     F->>E: engine(fp16)
     Note over E,DP: 第一次调用时加载 Depth Pro（约 10 s）
