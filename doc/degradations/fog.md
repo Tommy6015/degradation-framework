@@ -34,7 +34,7 @@ uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
    没有天空的图用整批输入图（最多 100 张）的平均大气光，都没有天空时用 0.8。
 3. Koschmieder 定律：t = exp(-β · 景深)，β = -ln(0.05) / 能见度；有雾图 = 原图 · t + L · (1 - t)。
 
-数据流图见 [architecture.md](../architecture.md) 第 3 节。
+调用顺序见 [architecture.md](../architecture.md) 第 3.2 节，输出的文件和 `fog_run.json` 的字段见第 4.3 节。
 
 ## 和直接运行 `c2f.py` 的差别
 

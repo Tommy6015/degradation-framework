@@ -10,6 +10,8 @@
 | 2. 核心类 | 有哪些核心抽象，它们的继承、组合、依赖关系 | UML 类图 |
 | 3. 运行时流程 | 一次命令里各对象按什么顺序调用，数据怎么流动 | UML 时序图 |
 
+另外，第 4 节写输入与输出（给什么、得到哪些文件、元数据里有什么），第 5 节写贯穿各模块的约定。
+
 ## 1. 分层结构
 
 ```mermaid
@@ -266,7 +268,82 @@ sequenceDiagram
 
 方法和参数的细节见 [degradations/fog.md](degradations/fog.md)。
 
-## 4. 贯穿各模块的约定
+## 4. 输入与输出
+
+一句话：**输入是图片、参数和种子（加上模型权重），输出是退化后的图片，以及每张图一份能复现结果的元数据**。
+入口有好几个，处理路径只有两条：通用的 `Pipeline` 路径，以及雾的专门命令 `degfw fog`。
+
+### 4.1 输入
+
+| 输入 | 从哪里给 | 说明 |
+|---|---|---|
+| 图片 | `-i` 后面给文件或文件夹 | 文件夹连子文件夹一起处理；支持 .png .jpg .jpeg .bmp .tif .tiff .webp；读入时按 EXIF 转正，转成 float32 RGB `[0, 1]` |
+| 用哪种退化、什么参数 | `degfw run 名字 -p 参数=值`；`degfw apply -c 配置.yaml`（可以串联多个退化）；GUI 控件 | 每个参数按退化声明的范围检查，没给的用默认值 |
+| 种子 | `--seed`、配置文件里的 `seed`、GUI | 处理文件夹时，每张图的种子由（种子, 相对路径）算出（[决策 0003](decisions/0003-folder-seeds.md)） |
+| 模型权重 | `third_party/weights.yaml` 里登记的文件 | 雾需要 `depth_pro.pt`；缺了的话，这种退化标为不可用（`degfw list` 写明原因） |
+
+### 4.2 输出：`degfw run` / `degfw apply` / GUI 批量处理
+
+```
+degfw apply -c configs/fog50.yaml -i data/input -o outputs/run1
+
+data/input/                     outputs/run1/
+├── cam1/0001.jpg       →       ├── pipeline.yaml       这次用的配置
+├── cam1/0002.jpg               ├── cam1/0001.png       结果，一律存成 .png
+└── cam2/0001.png               ├── cam1/0001.json      这张图的元数据
+                                ├── cam1/0002.png  + .json
+                                └── cam2/0001.png  + .json
+```
+
+- 输出保持输入的子文件夹结构；同一个文件夹里主名相同的图（`a.jpg` 和 `a.png`）输出为 `a.png` 和 `a_2.png`（[决策 0005](decisions/0005-output-name-collisions.md)）。
+- 每张图旁边的 `.json` 记着重做这张图需要的全部信息。配置的种子是 0 时，`cam1/0001.jpg` 的种子就是下面这个值：
+
+```json
+{
+  "source": "data\\input\\cam1\\0001.jpg",
+  "seed": 6542102234274946371,
+  "steps": [
+    {"name": "fog", "params": {"visibility": 50, "fp16": false}}
+  ]
+}
+```
+
+- 只重做一张图：`Pipeline.from_file("outputs/run1/pipeline.yaml").run_file(原图, 输出, seed=json 里的 seed)`。
+- 输入是单个文件时，`-o` 就是输出文件名（如 `out.png`），旁边生成 `out.json`，不生成 `pipeline.yaml`。
+- GUI 的单张图模式：结果和元数据显示在界面上，不自动存文件。脚本里用 `Pipeline.run(图)`，直接返回（结果图, 元数据）。
+
+### 4.3 输出：`degfw fog`（雾的专门命令，用法同原版 `c2f.py`）
+
+```
+degfw fog -i data/input/cam1 data/input/cam2 -o outputs/fog -v 50 200
+
+outputs/fog/
+├── foggy_0001_vis_50.png        cam1/0001.jpg，能见度 50 m
+├── foggy_0001_vis_200.png
+├── foggy_0001_2_vis_50.png      cam2/0001.png 也叫 0001，所以加了 _2
+├── foggy_0001_2_vis_200.png
+└── fog_run.json                 整次运行一份
+```
+
+和 4.2 的区别：只读文件夹本层的 .png .jpg .jpeg（不进子文件夹）；所有结果放在同一个文件夹；每个能见度各出一张，景深只算一次；
+有 EXIF 焦距就用上；没有天空的图用整批图的平均大气光。
+
+`fog_run.json` 的字段：
+
+| 字段 | 内容 |
+|---|---|
+| `method` | `"Clear2Fog"` |
+| `visibility_m` | 这次的能见度列表（米） |
+| `depth_pro_precision` | `"float32"` 或 `"float16"` |
+| `average_light` | 只在有图没有天空时出现：平均大气光的值，以及其中有天空的图片数 |
+| `images` | 每张输入一项，键是输出用的名字（如 `0001`、`0001_2`）：`source`（原图路径）、`outputs`（对应的输出文件）、`atmospheric_light`（`sky` 或 `average of input set`）、`depth_m`（景深的最小值和中位数） |
+
+### 4.4 现在还做不到的
+
+- **只处理图片，不读标注**：TUMTraf 的标注怎么跟着退化后的图片一起输出，是 M5 / M6 的事（见 [roadmap.md](roadmap.md)）。
+- **退化只能输出一张图**：镜头污染的 mask 还输出不了，这是 M3 要先决定的接口问题。
+
+## 5. 贯穿各模块的约定
 
 | 方面 | 约定 | 在哪里 |
 |---|---|---|
