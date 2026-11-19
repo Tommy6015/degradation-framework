@@ -20,5 +20,5 @@
 
 | 目录 | 用途 | 来源 URL | Commit / 版本 | 许可证 | 依赖组 | 本地修改 |
 |------|------|----------|---------------|--------|--------|----------|
-| `camera_contamination_simulation/` | 镜头污染：不透明污渍、半透明污渍、水滴 | https://github.com/Tommy6015/camera_contamination_simulation （自己的 fork） | `8f19968` | Apache-2.0 | `camera-contamination` | 任意图片尺寸、纯 Python 的 `noise.py`，见 [LOCAL_CHANGES.md](camera_contamination_simulation/LOCAL_CHANGES.md) |
+| `camera_contamination_simulation/` | 镜头污染：不透明污渍、半透明污渍、水滴 | https://github.com/Tommy6015/camera_contamination_simulation （自己的 fork，原作者 https://github.com/timdietereberhardt/camera_contamination_simulation） | `04c5c2f`（fork 分支 `any-image-size-and-droplet-fixes`，基于原作者的 `8f19968`） | Apache-2.0；`noise.py` 为 MIT（Casey Duncan） | `camera-contamination` | 无；对原作者代码的修改（任意图片尺寸、水滴修正、纯 Python 的 `noise.py`）都在 fork 里，见 [LOCAL_CHANGES.md](camera_contamination_simulation/LOCAL_CHANGES.md) |
 | `Clear2Fog/` | 雾：按能见度（米）给照片加雾，单目景深 Depth Pro + 大气散射模型 | https://github.com/Tommy6015/Clear2Fog （自己的 fork，上游 https://github.com/mmohamed28/Clear2Fog） | `9097f4a` | MIT；Depth Pro 见 `LICENSES/DEPTH_PRO` | `clear2fog` | `__init__.py` 注释掉 3 行导入，见 [LOCAL_CHANGES.md](Clear2Fog/LOCAL_CHANGES.md) |
