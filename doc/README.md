@@ -8,7 +8,7 @@
 | [roadmap.md](roadmap.md) | 论文主线、**论文项目总体架构图**（从数据来源到论文的 5 个阶段）、里程碑、要决定的事 | 里程碑完成、计划改变时 |
 | [architecture.md](architecture.md) | **本仓库内部**的架构：分层包图、核心类图、运行时时序图、输入与输出、贯穿各模块的约定 | 增删模块、依赖关系、调用顺序或输出格式改变时 |
 | [decisions/](decisions/README.md) | 关键决策记录：一个决定一个文件，写清背景、决定、放弃了哪些方案、影响 | 做出（或推翻）一个关键决定时新建一份 |
-| [status/](status/) | 每周状态：一周一个文件，如 `2026-W47.md` | 这一周里随时更新；每周一照 `status/template.md` 新建一份 |
+| [status/](status/) | 每周状态：一周一个文件，如 `2026-W47.md`；包括本周开发的功能的评判标准和核对结果 | 这一周里随时更新；每周一照 `status/template.md` 新建一份 |
 | [degradations/](degradations/) | 每种退化的详细用法、方法和注意事项 | 改了它的参数、命令或行为时 |
 
 约定：
@@ -19,5 +19,7 @@
     否则预览会在词的中间折开（如 `lens_dirt.p / y`）。
   - 流程图（`flowchart`）和类图（`classDiagram`）第一行照 `architecture.md` 里的写法加 `%%{init: ...}%%`，关掉 `htmlLabels`：
     文字由 Mermaid 自己排版，大小不受预览样式影响。
+- 每个功能开发前，先在当周的 status 文件里列出评判标准；完成后在同一张表里逐条写上结果和依据。
+  跨周的功能，表留在开始的那一周，之后几周的 status 里链接过去。
 - 周的编号用 ISO 周（周一开始）：`uv run python -c "import datetime; print(datetime.date.today().isocalendar())"`。
 - 文档里提到代码、提交、决策时写上文件名、提交号或决策编号，方便查回去。
