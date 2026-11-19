@@ -1,4 +1,4 @@
-"""Command line entry point:  degfw {list,apply,fog,gui}"""
+"""Command line entry point:  degfw {list,apply,fog,weights,gui}"""
 
 from __future__ import annotations
 
@@ -20,6 +20,34 @@ def _cmd_list(args) -> None:
             elif hasattr(spec, "choices"):
                 extra = f" {list(spec.choices)}"
             print(f"    {key}: {type(spec).__name__}{extra} default={spec.default!r}")
+        reason = deg.unavailable_reason()
+        if reason:
+            print("    UNAVAILABLE here: " + reason.replace("\n", "\n    "))
+
+
+def _cmd_weights(args) -> int:
+    from .core import weights
+
+    bad = 0
+    for w in weights.manifest().values():
+        state = weights.status(w, verify=args.verify)
+        if state in ("missing", "wrong size", "SHA-256 mismatch") and args.download and w.url:
+            print(f"{w.id}: downloading {w.url} ({w.size / 2**20:.0f} MiB)")
+            weights.download(w, progress=_progress)
+            print()
+            state = "ok (downloaded)"
+        print(f"  {w.id:<24} {state:<17} {w.size / 2**20:>7.1f} MiB  "
+              f"{'download' if w.url else 'in git':<9} third_party/{w.relpath}")
+        bad += state not in ("present", "ok", "ok (downloaded)")
+    if bad:
+        print(f"{bad} file(s) not usable." + ("" if args.download else "  Download with: uv run degfw weights --download"))
+    elif not args.verify:
+        print("All present (size checked). SHA-256: uv run degfw weights --verify")
+    return 1 if bad else 0
+
+
+def _progress(done: int, total: int) -> None:
+    print(f"\r  {done / 2**20:.0f} / {total / 2**20:.0f} MiB ({done / max(total, 1):.0%})", end="", flush=True)
 
 
 def _cmd_apply(args) -> None:
@@ -78,6 +106,12 @@ def main(argv: list[str] | None = None) -> None:
                          "from Clear2Fog (default float32 = identical)")
     fp.set_defaults(func=_cmd_fog)
 
+    wp = sub.add_parser("weights", help="state of the model weights of third_party code (third_party/weights.yaml)",
+                        description="List the model weights in third_party/weights.yaml and whether they are here.")
+    wp.add_argument("--verify", action="store_true", help="also check the SHA-256 of every file (reads them all)")
+    wp.add_argument("--download", action="store_true", help="download missing files that have a url, then verify")
+    wp.set_defaults(func=_cmd_weights)
+
     gp = sub.add_parser("gui", help="launch the GUI")
     gp.add_argument("--host", default="127.0.0.1")
     gp.add_argument("--port", type=int, default=7860)
@@ -85,7 +119,9 @@ def main(argv: list[str] | None = None) -> None:
     gp.set_defaults(func=_cmd_gui)
 
     args = parser.parse_args(argv)
-    args.func(args)
+    code = args.func(args)
+    if code:
+        raise SystemExit(code)
 
 
 if __name__ == "__main__":

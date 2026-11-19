@@ -17,6 +17,8 @@ outputs/
 *.onnx
 # ...except model weights that ship with vendored third_party code
 !third_party/**/*.pth
+# unfinished downloads of `degfw weights --download`
+*.part
 
 # Gradio
 .gradio/

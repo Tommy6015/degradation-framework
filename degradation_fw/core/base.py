@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any, ClassVar
 
 import numpy as np
@@ -22,10 +23,23 @@ class Degradation:
     description: ClassVar[str] = ""
     params: ClassVar[dict[str, Param]] = {}
 
+    # What it needs to run, checked by unavailable_reason(): if something is missing,
+    # `degfw list` says so and its tests are skipped, instead of failing.
+    requires_modules: ClassVar[tuple[str, ...]] = ()  # top-level modules, from its dependency group
+    requires_weights: ClassVar[tuple[str, ...]] = ()  # ids in third_party/weights.yaml
+
     @classmethod
     def unavailable_reason(cls) -> str | None:
-        """None if the degradation can run here; otherwise why not (e.g. missing
-        model weights). Lets tests skip it instead of failing."""
+        """None if the degradation can run here; otherwise why not. Checks
+        requires_modules and requires_weights; override to check more."""
+        missing = [m for m in cls.requires_modules if importlib.util.find_spec(m) is None]
+        if missing:
+            return (f"Python packages not installed: {', '.join(missing)} "
+                    "(uv sync installs every dependency group)")
+        if cls.requires_weights:
+            from .weights import missing_weights
+
+            return missing_weights(cls.requires_weights)
         return None
 
     def resolve_params(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:

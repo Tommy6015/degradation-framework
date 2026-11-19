@@ -28,15 +28,11 @@ Differences to running c2f.py, none of which change the fog itself:
 
 from __future__ import annotations
 
-import contextlib
 import importlib
 import json
-import os
 import random
-import sys
 import tempfile
 import time
-import types
 from pathlib import Path
 
 import numpy as np
@@ -44,47 +40,28 @@ import numpy as np
 from degradation_fw.core.base import Degradation
 from degradation_fw.core.io import to_uint8
 from degradation_fw.core.params import Bool, Int
-from degradation_fw.core.paths import THIRD_PARTY_DIR
+from degradation_fw.core.paths import import_third_party_package, third_party_dir, working_dir
 from degradation_fw.core.registry import register
+from degradation_fw.core.weights import missing_weights
 
-C2F_ROOT = THIRD_PARTY_DIR / "Clear2Fog"
-CHECKPOINT = C2F_ROOT / "src" / "fog_pipeline" / "depth_map" / "depth_pro" / "checkpoints" / "depth_pro.pt"
-CHECKPOINT_URL = "https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt"
+REPO = "Clear2Fog"  # third_party/Clear2Fog
+# Everything Clear2Fog needs: Python packages (dependency group clear2fog in pyproject.toml)
+# and model weights (ids in third_party/weights.yaml)
+MODULES = ("torch", "torchvision", "timm", "pillow_heif", "skimage")
+WEIGHTS = ("depth_pro",)
 MIN_SKY_DEPTH = 1000  # metres; c2f.py's min_depth for the atmospheric light
 MAX_AVG_SAMPLES = 100  # as in FogCamera.__init__
 SAMPLE_SEED = 0  # seed for picking the images that the average atmospheric light is computed from
 
 
-def checkpoint_missing() -> str | None:
-    if CHECKPOINT.is_file():
-        return None
-    return f"Depth Pro checkpoint not found: {CHECKPOINT}\nDownload it from {CHECKPOINT_URL}"
-
-
-@contextlib.contextmanager
-def _cwd(path: Path):
-    old = os.getcwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(old)
-
-
 def _import_clear2fog():
-    """Import Clear2Fog's Depth Pro and camera fog modules without running
-    src/fog_pipeline/__init__.py (which also imports the LiDAR part and PyQt5)."""
-    for name, folder in (("src", C2F_ROOT / "src"), ("src.fog_pipeline", C2F_ROOT / "src" / "fog_pipeline")):
-        existing = sys.modules.get(name)
-        if existing is None:
-            module = types.ModuleType(name)
-            module.__path__ = [str(folder)]
-            sys.modules[name] = module
-        elif str(folder) not in list(getattr(existing, "__path__", [])):
-            raise ImportError(f"A different package named {name!r} is already imported ({existing!r})")
-    depth_generation = importlib.import_module("src.fog_pipeline.depth_map.depth_generation")
-    camera_fog = importlib.import_module("src.fog_pipeline.simulate_fog.camera.camera_fog_simulation")
-    depth_pro_utils = importlib.import_module("src.fog_pipeline.depth_map.depth_pro.utils")
+    """Clear2Fog's Depth Pro and camera fog modules. src/fog_pipeline is loaded as a
+    private package (_tp_clear2fog) without running its __init__.py, which would also
+    import the LiDAR part (and PyQt5)."""
+    pkg = import_third_party_package(REPO, "src/fog_pipeline")
+    depth_generation = importlib.import_module(f"{pkg.__name__}.depth_map.depth_generation")
+    camera_fog = importlib.import_module(f"{pkg.__name__}.simulate_fog.camera.camera_fog_simulation")
+    depth_pro_utils = importlib.import_module(f"{pkg.__name__}.depth_map.depth_pro.utils")
     return depth_generation.DepthGenerator, camera_fog.FogCamera, depth_pro_utils.load_rgb
 
 
@@ -100,14 +77,14 @@ class Clear2Fog:
     def __init__(self, fp16: bool = False):
         import torch
 
-        missing = checkpoint_missing()
+        missing = missing_weights(WEIGHTS)
         if missing:
             raise FileNotFoundError(missing)
         DepthGenerator, FogCamera, self._load_rgb = _import_clear2fog()
         self.fp16 = fp16
         t = time.time()
         # Depth Pro's checkpoint path is relative to the Clear2Fog root
-        with _cwd(C2F_ROOT):
+        with working_dir(third_party_dir(REPO)):
             self.depth = DepthGenerator(precision=torch.float16 if fp16 else torch.float32)
         # FogCamera.__init__ would run Depth Pro on up to 100 images of a folder to
         # average the atmospheric light. Give it an empty folder (-> its fallback
@@ -185,16 +162,14 @@ class Fog(Degradation):
     label = "雾 Fog (Clear2Fog)"
     description = ("Clear2Fog: Depth Pro monocular depth + atmospheric scattering model. "
                    "Lower visibility = denser fog.")
+    requires_modules = MODULES
+    requires_weights = WEIGHTS
     params = {
         "visibility": Int(default=100, min=5, max=2000, step=5, label="能见度 visibility (m)",
                           help="Meteorological optical range in metres; lower = denser fog"),
         "fp16": Bool(default=False, label="半精度 fp16 (快约 20 倍，结果略有差异)",
                      help="Run Depth Pro in float16: much faster on GPU, depth differs by ~0.1 %"),
     }
-
-    @classmethod
-    def unavailable_reason(cls) -> str | None:
-        return checkpoint_missing()
 
     def apply(self, image, rng, visibility, fp16):
         # Deterministic: no randomness involved, rng is not used.

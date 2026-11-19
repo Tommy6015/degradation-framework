@@ -1,0 +1,33 @@
+# Model weights used by the code in third_party/. One entry per file.
+#
+#   path    where the third-party code expects the file, relative to third_party/
+#   size    in bytes; with sha256 checked by `degfw weights --verify` and after a download
+#   url     where `degfw weights --download` gets it; no url = the file is in git
+#
+# Adapters refer to an entry by its id:  requires_weights = ("depth_pro",)
+# State of all files:                    uv run degfw weights
+
+depth_pro:
+  path: Clear2Fog/src/fog_pipeline/depth_map/depth_pro/checkpoints/depth_pro.pt
+  url: https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt
+  size: 1904446787
+  sha256: 3eb35ca68168ad3d14cb150f8947a4edf85589941661fdb2686259c80685c0ce
+  note: Apple Depth Pro (monocular metric depth), used by Clear2Fog. Not in git (1.9 GB).
+
+contamination_opaque:
+  path: camera_contamination_simulation/gen_models/best_model_total.pth
+  size: 34480210
+  sha256: 19929a8b2d016da138d4755ff8f58a8de0998b87643bb9fb30206caaa9dace86
+  note: Shape generator for opaque soiling. In git. Saved on GPU, loads only with CUDA.
+
+contamination_semi:
+  path: camera_contamination_simulation/gen_models/best_model_semi.pth
+  size: 34480178
+  sha256: 19735c4750a507282664df252190e478ec05aec9d9ea5f807266c03948bf6965
+  note: Shape generator for semi-transparent soiling. In git. Saved on GPU, loads only with CUDA.
+
+contamination_droplet:
+  path: camera_contamination_simulation/gen_models/best_model_droplet.pth
+  size: 34480226
+  sha256: 6f5e7e9e93888529cbe3ec5807ad8edb2e9d58b0efe70902817c6803086ba6b0
+  note: Shape generator for water droplets. In git. Saved on GPU, loads only with CUDA.
