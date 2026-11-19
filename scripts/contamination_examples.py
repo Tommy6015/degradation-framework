@@ -1,6 +1,13 @@
-"""Run the contamination generators of this repository on one or more images.
+"""Run the contamination generators of third_party/camera_contamination_simulation on
+one or more images.
 
-Equivalent to usage_example.ipynb, but
+Our own tool, not part of the vendored repository: it used to be
+third_party/camera_contamination_simulation/reproduce_examples.py (history:
+git log --follow scripts/contamination_examples.py). It loads the vendored code with
+use_third_party() and the models from third_party/weights.yaml, so it runs from any
+folder; the results are the same as before the move.
+
+Equivalent to the repository's usage_example.ipynb, but
 - works with any input image (the notebook's examples/ folder is not in the repo),
 - fixes the random seeds, so a run can be repeated exactly,
 - saves every result as a file instead of only showing it,
@@ -17,53 +24,53 @@ Only the types you give are run (--opaque-color / --opaque-gradient alone also c
   --droplet            without numbers -> that type at its default spot
   no option at all     -> all three types at their default spots (the notebook examples)
 
-Usage (from this folder, with the environment activated):
+Usage (from the repository root):
 
     # all three types at the default spots
-    uv run python reproduce_examples.py --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --image IMG.jpg --out OUT
 
     # only water droplets, at the default spot
-    uv run python reproduce_examples.py --droplet --image PATH/TO/FOLDER --out OUT
+    uv run python scripts/contamination_examples.py --droplet --image PATH/TO/FOLDER --out OUT
 
     # one water droplet in the upper right, for every image in a folder (add --recursive for subfolders)
-    uv run python reproduce_examples.py --droplet 0.8 0.2 0.3 --image PATH/TO/FOLDER --out OUT
+    uv run python scripts/contamination_examples.py --droplet 0.8 0.2 0.3 --image PATH/TO/FOLDER --out OUT
 
     # three droplets on the same image
-    uv run python reproduce_examples.py --droplet 0.2 0.3 0.2 --droplet 0.6 0.5 0.15 --droplet 0.8 0.8 0.1 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --droplet 0.2 0.3 0.2 --droplet 0.6 0.5 0.15 --droplet 0.8 0.8 0.1 --image IMG.jpg --out OUT
 
     # opaque soiling in the centre and one droplet, several files and folders at once
-    uv run python reproduce_examples.py --opaque 0.5 0.5 0.3 --droplet 0.2 0.2 0.2 --image a.jpg b.png FOLDER --out OUT
+    uv run python scripts/contamination_examples.py --opaque 0.5 0.5 0.3 --droplet 0.2 0.2 0.2 --image a.jpg b.png FOLDER --out OUT
 
     # opaque soiling in your own colour (RGB 0..255), two spots
-    uv run python reproduce_examples.py --opaque 0.3 0.5 0.2 --opaque 0.7 0.4 0.15 --opaque-color 90 70 50 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --opaque 0.3 0.5 0.2 --opaque 0.7 0.4 0.15 --opaque-color 90 70 50 --image IMG.jpg --out OUT
 
     # several colours at once: one result per colour, all with the same shapes
-    uv run python reproduce_examples.py --opaque --opaque-color 0 0 0 --opaque-color 90 70 50 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --opaque --opaque-color 0 0 0 --opaque-color 90 70 50 --image IMG.jpg --out OUT
 
     # gradient: edge colour -> centre colour; --opaque-gamma > 1 shows more of the edge colour
-    uv run python reproduce_examples.py --opaque --opaque-gradient 139 90 43 0 0 0 --opaque-gamma 2 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --opaque --opaque-gradient 139 90 43 0 0 0 --opaque-gamma 2 --image IMG.jpg --out OUT
 
     # every spot in its own colour, all on one image (result: opaque.png):
     # X Y SIZE R G B = solid, X Y SIZE R1 G1 B1 R2 G2 B2 = gradient edge -> centre
-    uv run python reproduce_examples.py --opaque 0.3 0.5 0.2 0 0 0 --opaque 0.7 0.4 0.15 90 70 50 --opaque 0.5 0.8 0.1 139 90 43 0 0 0 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --opaque 0.3 0.5 0.2 0 0 0 --opaque 0.7 0.4 0.15 90 70 50 --opaque 0.5 0.8 0.1 139 90 43 0 0 0 --image IMG.jpg --out OUT
 
     # spots without own colour follow --opaque-color etc. (or the defaults), spots with one keep it
-    uv run python reproduce_examples.py --opaque 0.3 0.5 0.2 --opaque 0.7 0.4 0.15 255 0 0 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --opaque 0.3 0.5 0.2 --opaque 0.7 0.4 0.15 255 0 0 --image IMG.jpg --out OUT
 
     # semi-transparent soiling: colour, strength (0..1) and noise scale(s)
-    uv run python reproduce_examples.py --semi 0.5 0.6 0.4 --semi-color 200 170 120 --semi-opacity 0.6 --semi-scale 50 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --semi 0.5 0.6 0.4 --semi-color 200 170 120 --semi-opacity 0.6 --semi-scale 50 --image IMG.jpg --out OUT
 
     # two semi spots, the first with its own opacity (4th number), the second with --semi-opacity
-    uv run python reproduce_examples.py --semi 0.3 0.4 0.4 0.3 --semi 0.75 0.6 0.4 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --semi 0.3 0.4 0.4 0.3 --semi 0.75 0.6 0.4 --image IMG.jpg --out OUT
 
     # earlier behaviour: centre-crop to a square
-    uv run python reproduce_examples.py --droplet 0.3 0.4 0.5 --image IMG.jpg --out OUT --square
+    uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.5 --image IMG.jpg --out OUT --square
 
     # random shapes: every image draws its own seed (printed and saved to seed.json)
-    uv run python reproduce_examples.py --droplet 0.3 0.4 0.5 --seed random --image FOLDER --out OUT
+    uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.5 --seed random --image FOLDER --out OUT
 
     # reproduce one result of a random run: same spots, seed from its seed.json
-    uv run python reproduce_examples.py --droplet 0.3 0.4 0.5 --seed 1234567 --image IMG.jpg --out OUT
+    uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.5 --seed 1234567 --image IMG.jpg --out OUT
 
 Output: with a single input image the results go directly into --out; with several,
 each image gets its own subfolder --out/<image name>/. Per type: opaque_black.png and
@@ -121,7 +128,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from contamination_simulation import DropletGenerator, OpaqueContaminationGenerator, SemiContaminationGenerator
+from degradation_fw.core.paths import use_third_party
+from degradation_fw.core.weights import weight_path
+
+# The vendored code imports its own modules by top-level name (from noise import pnoise2)
+use_third_party("camera_contamination_simulation", modules=["contamination_simulation", "noise"])
+from contamination_simulation import (  # noqa: E402
+    DropletGenerator,
+    OpaqueContaminationGenerator,
+    SemiContaminationGenerator,
+)
 
 DROPLET_SIZE = 966  # size used in the original example (defisheyed WoodScape images)
 F_C = 380  # camera focal length in px used by the authors for WoodScape (see end of contamination_simulation.py)
@@ -549,11 +565,11 @@ def main() -> None:
     # Load only the models that are needed, once for all images
     generators = {}
     if args.opaque:
-        generators["opaque"] = OpaqueContaminationGenerator("gen_models/best_model_total.pth")
+        generators["opaque"] = OpaqueContaminationGenerator(str(weight_path("contamination_opaque")))
     if args.semi:
-        generators["semi"] = SemiContaminationGenerator("gen_models/best_model_semi.pth")
+        generators["semi"] = SemiContaminationGenerator(str(weight_path("contamination_semi")))
     if args.droplet:
-        generators["droplet"] = DropletGenerator(model_path="gen_models/best_model_droplet.pth")
+        generators["droplet"] = DropletGenerator(model_path=str(weight_path("contamination_droplet")))
 
     failed, seeds = [], {}
     for i, (path, out) in enumerate(zip(images, output_folders(images, args.out)), start=1):
