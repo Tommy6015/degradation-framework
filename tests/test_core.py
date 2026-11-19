@@ -8,6 +8,13 @@ from PIL import Image
 
 from degradation_fw import Pipeline, Step, available, get
 from degradation_fw.core.io import load_image, save_image
+from degradation_fw.core.pipeline import image_seed
+
+
+def folder_seeds(p, src, dst):
+    """{output file name: seed recorded in its .json} of one run_folder call."""
+    return {o.name: json.loads(o.with_suffix(".json").read_text(encoding="utf-8"))["seed"]
+            for o in p.run_folder(src, dst)}
 
 
 def test_registry_lists_example():
@@ -48,6 +55,32 @@ def test_run_folder_writes_images_and_metadata(tmp_path, image):
         assert load_image(o).shape == image.shape
         meta = json.loads(o.with_suffix(".json").read_text(encoding="utf-8"))
         assert meta["steps"][0]["name"] == "gaussian_noise"
+
+
+def test_folder_seeds_do_not_depend_on_other_images(tmp_path, image):
+    src = tmp_path / "in"
+    save_image(image, src / "a.png")
+    save_image(image, src / "c.png")
+    p = Pipeline([Step("gaussian_noise")], seed=0)
+    before = folder_seeds(p, src, tmp_path / "out1")
+    save_image(image, src / "b.png")  # one more image, sorted between the two
+    after = folder_seeds(p, src, tmp_path / "out2")
+    assert after["a.png"] == before["a.png"] and after["c.png"] == before["c.png"]
+    assert len(set(after.values())) == 3
+
+
+def test_folder_seeds_of_different_runs_are_unrelated():
+    names = [f"img{i:03d}.png" for i in range(50)]
+    assert not {image_seed(0, n) for n in names} & {image_seed(1, n) for n in names}
+    assert image_seed(0, "sub/a.png") == image_seed(0, "sub/a.png")
+
+
+def test_recorded_seed_redoes_one_image(tmp_path, image):
+    save_image(image, tmp_path / "in" / "a.png")
+    p = Pipeline([Step("gaussian_noise")], seed=0)
+    seed = folder_seeds(p, tmp_path / "in", tmp_path / "out")["a.png"]
+    p.run_file(tmp_path / "in" / "a.png", tmp_path / "again.png", seed=seed)
+    np.testing.assert_array_equal(load_image(tmp_path / "again.png"), load_image(tmp_path / "out" / "a.png"))
 
 
 def test_load_image_applies_exif_orientation(tmp_path):

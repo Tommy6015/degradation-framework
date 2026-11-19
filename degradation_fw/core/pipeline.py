@@ -7,12 +7,14 @@ A pipeline config looks like (YAML / JSON / dict)::
       - name: gaussian_noise
         params: {sigma: 0.05}
       - name: fog
-        params: {density: 0.6}
+        params: {visibility: 50}
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -22,6 +24,20 @@ import yaml
 
 from . import registry
 from .io import list_images, load_image, save_image
+
+
+def image_seed(seed: int, rel_path: str | Path) -> int:
+    """Seed of one image in a folder run, derived from the run's seed and the image's
+    path relative to the folder ('/' separators). It does not depend on which other
+    images are in the folder, and runs with different seeds get unrelated seeds.
+    (It used to be seed + index: one image more or less shifted the seeds of all later
+    images, and image k+1 of the run with seed 0 had the same seed as image k of the
+    run with seed 1.) 63-bit; recorded in each image's .json, so one image can be redone
+    with run_file(..., seed=that)."""
+    key = unicodedata.normalize("NFC", Path(rel_path).as_posix()).encode("utf-8")
+    words = np.frombuffer(hashlib.sha256(key).digest()[:16], dtype="<u4")
+    state = np.random.SeedSequence([int(seed), *(int(w) for w in words)]).generate_state(1, dtype=np.uint64)
+    return int(state[0] >> np.uint64(1))
 
 
 @dataclass
@@ -85,14 +101,16 @@ class Pipeline:
                    progress: Callable[[int, int, Path], None] | None = None) -> list[Path]:
         """Process every image under src_dir, keeping the sub-folder layout.
 
-        Each image gets seed = pipeline seed + index (or random if seed is None).
+        Each image gets the seed image_seed(pipeline seed, its path relative to src_dir),
+        or a random one if the pipeline has no seed; the seed used is in its .json.
         """
         src_dir, dst_dir = Path(src_dir), Path(dst_dir)
         files = list_images(src_dir)
         outputs = []
         for i, f in enumerate(files):
-            seed = None if self.seed is None else self.seed + i
-            dst = (dst_dir / f.relative_to(src_dir)).with_suffix(".png")
+            rel = f.relative_to(src_dir)
+            seed = None if self.seed is None else image_seed(self.seed, rel)
+            dst = (dst_dir / rel).with_suffix(".png")
             self.run_file(f, dst, seed=seed)
             outputs.append(dst)
             if progress:
