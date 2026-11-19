@@ -8,9 +8,10 @@ build/
 dist/
 .pytest_cache/
 
-# Data and results (too large / regenerable)
-data/
-outputs/
+# Data and results (too large / regenerable). Only the folders at the repository
+# root: tests/data/ holds small reference images that belong in git.
+/data/
+/outputs/
 *.pth
 *.pt
 *.ckpt

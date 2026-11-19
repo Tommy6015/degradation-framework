@@ -60,3 +60,6 @@ packages = ["degradation_fw"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: runs a model on the GPU with its weights (e.g. Depth Pro); quick run without them: pytest -m \"not slow\"",
+]
