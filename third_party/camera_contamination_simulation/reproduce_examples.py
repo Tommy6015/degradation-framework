@@ -50,6 +50,12 @@ Usage (from this folder, with the environment activated):
     # spots without own colour follow --opaque-color etc. (or the defaults), spots with one keep it
     uv run python reproduce_examples.py --opaque 0.3 0.5 0.2 --opaque 0.7 0.4 0.15 255 0 0 --image IMG.jpg --out OUT
 
+    # semi-transparent soiling: colour, strength (0..1) and noise scale(s)
+    uv run python reproduce_examples.py --semi 0.5 0.6 0.4 --semi-color 200 170 120 --semi-opacity 0.6 --semi-scale 50 --image IMG.jpg --out OUT
+
+    # two semi spots, the first with its own opacity (4th number), the second with --semi-opacity
+    uv run python reproduce_examples.py --semi 0.3 0.4 0.4 0.3 --semi 0.75 0.6 0.4 --image IMG.jpg --out OUT
+
     # earlier behaviour: centre-crop to a square
     uv run python reproduce_examples.py --droplet 0.3 0.4 0.5 --image IMG.jpg --out OUT --square
 
@@ -64,7 +70,7 @@ each image gets its own subfolder --out/<image name>/. Per type: opaque_black.pn
 opaque_brown.png (same shapes, two colours; with --opaque-color / --opaque-gradient one
 file per given colour instead, e.g. opaque_90_70_50.png, opaque_139_90_43_to_0_0_0.png;
 if every --opaque spot has its own colour, just one opaque.png),
-semi_scale10.png and semi_scale1000.png (two noise scales), droplet.png; each with a
+semi_scale10.png and semi_scale1000.png (one per --semi-scale), droplet.png; each with a
 _mask.png, plus overview.png and seed.json.
 With --save-input also input.png, a copy of the input image (not saved by default).
 
@@ -89,6 +95,13 @@ Notes:
 - The seed only changes the shapes (and how many separate droplets one spot
   splits into, distortion, ...). Position and size come from the spots. seed.json
   also records the spots, so it holds everything needed to rerun a result.
+- Semi-transparent soiling: result = image * (1 - a) + colour * a per pixel, with
+  a = opacity * shape mask * Perlin texture. --semi-color sets the one colour,
+  --semi-opacity scales a (a spot's 4th number overrides it), --semi-scale sets the
+  texture grain. The Perlin texture does NOT depend on the seed: same image size
+  and scale -> same texture; the seed only changes the outline.
+- Even at opacity 1 the semi soiling covers only about 30 % on average (shape and
+  noise are both below 1), so on bright scenes a light colour is hard to see.
 """
 
 from __future__ import annotations
@@ -132,6 +145,12 @@ DEFAULT_OPAQUE_VARIANTS = [
     {"name": "opaque_black", "color": [0, 0, 0]},
     {"name": "opaque_brown", "edge": [139, 90, 43], "centre": [0, 0, 0]},
 ]
+
+# Semi-transparent soiling. Per pixel: result = image * (1 - a) + colour * a, with
+# a = opacity * shape mask (network, 0..1) * Perlin noise texture (0..1).
+SEMI_COLOR = [194, 178, 128]  # default for --semi-color (sand; the original script used grey 125 125 125), RGB 0..255
+SEMI_OPACITY = 1.0  # default for --semi-opacity: 1 = original strength, 0 = invisible
+SEMI_SCALES = [10, 1000]  # default for --semi-scale: one result per noise scale
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
@@ -174,6 +193,17 @@ def spot_colour(own: tuple, gamma: float) -> dict | None:
     if len(own) == 6:
         return {"edge": own[:3], "centre": own[3:], "gamma": gamma}
     return None
+
+
+def scale_effect(before: np.ndarray, after: np.ndarray, opacity: float) -> np.ndarray:
+    """Keeps `opacity` (0..1) of the change from `before` to `after`.
+
+    For the semi-transparent soiling, after = before * (1 - a) + colour * a, so this is
+    exactly the same as using opacity * a as the blending weight."""
+    if opacity == 1:
+        return after
+    b = before.astype(np.float32)
+    return np.clip(np.rint(b + opacity * (after.astype(np.float32) - b)), 0, 255).astype(np.uint8)
 
 
 def apply_spots(img: np.ndarray, spots: list[list[float]], apply) -> tuple[np.ndarray, np.ndarray]:
@@ -290,18 +320,26 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
             results.append((variant["name"], img, mask))
         print(f"  opaque: {len(args.opaque)} spot(s), {len(args.opaque_variants)} colour variant(s)")
 
-    # 2. Semi-transparent soiling (dust, sand): Perlin noise texture, at two noise scales.
+    # 2. Semi-transparent soiling (dust, sand): one colour, made patchy by a Perlin noise
+    #    texture, one result per noise scale. All scales use the same seed (same shapes).
+    #    A spot's optional 4th number is its own opacity, otherwise --semi-opacity.
+    #    Note: the Perlin texture does not depend on the seed; it only depends on the
+    #    image size and the noise scale. The seed changes the outline (network) only.
     #    Slow: one noise evaluation per pixel (about 1 million at 960x960), so the time grows
     #    with the image size and the number of spots.
     if args.semi:
         semi = generators["semi"]
-        for scale in (10, 1000):
+        for scale in args.semi_scale:
+            def apply(im, x, y, s, *own, scale=scale):
+                out_img, m = semi.apply_mask_with_perlin_noise(
+                    im, x, y, s, mask_color=tuple(args.semi_color), noise_scale=scale)
+                return scale_effect(im, out_img, own[0] if own else args.semi_opacity), m
+
             set_seed(seed)
             t = time.time()
-            img, mask = apply_spots(img960, args.semi, lambda im, x, y, s: semi.apply_mask_with_perlin_noise(
-                im, x, y, s, mask_color=(125, 125, 125), noise_scale=scale))  # fmt: skip
-            print(f"  semi-transparent, noise scale {scale}: {len(args.semi)} spot(s), {time.time() - t:.1f} s")
-            results.append((f"semi_scale{scale}", img, mask))
+            img, mask = apply_spots(img960, args.semi, apply)
+            print(f"  semi-transparent, noise scale {scale:g}: {len(args.semi)} spot(s), {time.time() - t:.1f} s")
+            results.append((f"semi_scale{scale:g}", img, mask))
 
     # 3. Water droplets. The network mask of one spot can contain several separate
     #    droplets; each is judged ZoomIn/ZoomOut by its own size.
@@ -359,6 +397,8 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
         # Spots with numbers after X Y SIZE use their own colour instead (gamma = opaque_gamma).
         "opaque_colors": args.opaque_variants if args.opaque else [],
         "opaque_gamma": args.opaque_gamma,
+        # semi-transparent: colour, opacity (spots with a 4th number use their own), noise scales
+        "semi_color": args.semi_color, "semi_opacity": args.semi_opacity, "semi_scales": args.semi_scale,
     }  # fmt: skip
     (out / "seed.json").write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     return seed
@@ -379,7 +419,8 @@ def main() -> None:
             f"--{name}", nargs="*", type=float, action="append", metavar="X Y SIZE",
             help=f"Add {what}: " + spot_help.format(DEFAULT_SPOTS[name]) + (
                 " Optionally followed by this spot's own colour: R G B (solid) or R1 G1 B1 R2 G2 B2 "
-                "(gradient edge -> centre), RGB 0..255." if name == "opaque" else ""),
+                "(gradient edge -> centre), RGB 0..255." if name == "opaque" else
+                " Optionally followed by this spot's own OPACITY 0..1." if name == "semi" else ""),
         )  # fmt: skip
     parser.add_argument(
         "--opaque-color", nargs=3, type=int, action="append", metavar=("R", "G", "B"),
@@ -392,6 +433,19 @@ def main() -> None:
     parser.add_argument(
         "--opaque-gamma", type=float, default=OPAQUE_GAMMA,
         help=f"Gradient shape (default {OPAQUE_GAMMA}): < 1 more of the centre colour, > 1 more of the edge colour",
+    )  # fmt: skip
+    parser.add_argument(
+        "--semi-color", nargs=3, type=int, metavar=("R", "G", "B"),
+        help=f"Colour of the semi-transparent soiling, RGB 0..255 (default {' '.join(map(str, SEMI_COLOR))}, sand)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--semi-opacity", type=float,
+        help=f"Strength of the semi-transparent soiling, 0..1 (default {SEMI_OPACITY:g} = original; 0.5 = half as strong)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--semi-scale", nargs="+", type=float, metavar="SCALE",
+        help="Perlin noise scale(s), one result each (default "
+        f"{' '.join(map(str, SEMI_SCALES))}): small = fine grain, large = smooth, large patches",
     )  # fmt: skip
     parser.add_argument("--recursive", action="store_true", help="Also search subfolders of the given folders")
     parser.add_argument(
@@ -428,6 +482,22 @@ def main() -> None:
             v["gamma"] = args.opaque_gamma
     args.opaque_variants = variants
 
+    # Semi-transparent options. Giving one without --semi means: semi at its default spot.
+    semi_option_given = any(v is not None for v in (args.semi_color, args.semi_opacity, args.semi_scale))
+    if semi_option_given and not args.semi:
+        args.semi = [[]]
+    args.semi_color = SEMI_COLOR if args.semi_color is None else args.semi_color
+    args.semi_opacity = SEMI_OPACITY if args.semi_opacity is None else args.semi_opacity
+    args.semi_scale = SEMI_SCALES if args.semi_scale is None else args.semi_scale
+    if not all(0 <= v <= 255 for v in args.semi_color):
+        parser.error(f"--semi-color values must be 0..255, got {' '.join(map(str, args.semi_color))}")
+    if not 0 <= args.semi_opacity <= 1:
+        parser.error(f"--semi-opacity must be in 0..1, got {args.semi_opacity:g}")
+    if not all(s > 0 for s in args.semi_scale):
+        parser.error(f"--semi-scale values must be > 0, got {' '.join(f'{s:g}' for s in args.semi_scale)}")
+    args.semi_color = list(args.semi_color)
+    args.semi_scale = list(dict.fromkeys(args.semi_scale))  # same scale twice -> once
+
     # No option at all: all three types with their default spots
     use_all_defaults = not any(getattr(args, name) for name in GENERATORS)
     selected = []
@@ -448,6 +518,12 @@ def main() -> None:
                 if not all(v == int(v) and 0 <= v <= 255 for v in colour):
                     parser.error(f"--opaque colour values must be integers 0..255, got {' '.join(f'{v:g}' for v in colour)}")
                 entry = entry[:3] + [int(v) for v in colour]
+            elif name == "semi":  # semi spots may carry their own opacity
+                if len(entry) not in (3, 4):
+                    parser.error(f"--semi needs X Y SIZE, optionally followed by OPACITY, or nothing for the default; "
+                                 f"got {len(entry)} numbers")  # fmt: skip
+                if len(entry) == 4 and not 0 <= entry[3] <= 1:
+                    parser.error(f"--semi opacity must be in 0..1, got {entry[3]:g}")
             elif len(entry) != 3:
                 parser.error(f"--{name} needs 3 numbers (X Y SIZE) or none for the default, got {len(entry)}")
             x, y, size = entry[:3]

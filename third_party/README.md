@@ -35,6 +35,9 @@ UNet 检测实验（`unet_detection/`）和论文插图（`figs/`）没有引入
   （边缘色→中心色）、`--opaque-gamma`，均可重复，每种颜色一张结果；不给则仍是原来的黑色 + 棕黑渐变。
   单块污渍也可以自带颜色：`--opaque X Y SIZE R G B` 或 `--opaque X Y SIZE R1 G1 B1 R2 G2 B2`，
   多块不同颜色叠在同一张图上；每块都带颜色时只出一张 `opaque.png`。
+  半透明污渍加了 `--semi-color R G B`（颜色，默认沙色 194 178 128；原脚本是灰色 125 125 125）、`--semi-opacity`（强度 0..1，默认 1 = 原样）、
+  `--semi-scale`（噪声尺度，默认 10 和 1000 各一张）；单块可写 `--semi X Y SIZE OPACITY` 自带强度。
+  透明度在脚本里按比例混合实现，没有改 `contamination_simulation.py`。默认颜色改成了沙色，想得到原来的灰色结果用 `--semi-color 125 125 125`。
 
 注意：模型权重是在 GPU 上保存的，按原样只能在有 CUDA 的机器上加载。
 
