@@ -53,7 +53,8 @@ degradation-framework/
 │   ├── architecture.md             模块依赖图、数据流图
 │   ├── decisions/                  关键决策记录，一个决定一个文件
 │   ├── status/                     每周状态，一周一个文件
-│   └── degradations/               各退化的详细用法
+│   ├── degradations/               各退化的详细用法
+│   └── commands.md                 测试各功能的命令行和注意事项
 ├── doc_EN/                         doc/ 的英文版，结构相同（以 doc/ 为准）
 ├── tests/                          测试
 │   ├── test_*.py                     框架本身；test_contract.py 自动检查每个已注册的退化
@@ -111,6 +112,9 @@ uv run degfw apply -c configs/example.yaml -i data/input -o outputs/run1   # 按
 uv run pytest                       # 全部测试（含需要 GPU 和模型的，约 2 分钟）
 uv run pytest -m "not slow"         # 只跑不需要模型的，不到 1 秒
 ```
+
+在 PowerShell 里测试各个功能的完整命令（包括雾、水滴、不透明和半透明污渍，以及运行时再输入参数的写法）和注意事项，
+见 [doc/commands.md](doc/commands.md)。
 
 不想装某个仓库的依赖时，`uv sync` 和 `uv run` 都加 `--no-group <组名>`（组名见 `third_party/README.md`；
 只给 `uv sync` 加的话，下一次 `uv run` 会按默认把它装回来）。它的退化会在 `degfw list` 里标为不可用，测试自动跳过。

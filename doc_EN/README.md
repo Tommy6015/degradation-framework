@@ -14,6 +14,7 @@ the environment, how to develop. Documents for managing the development and the 
 | [decisions/](decisions/README.md) | Decision records: one file per decision, with context, decision, rejected options and consequences | A new file whenever a key decision is made (or reversed) |
 | [status/](status/) | Weekly status, one file per week, e.g. `2026-W47.md`; includes the acceptance criteria and check results of the features developed that week | Updated during the week; a new file every Monday from `status/template.md` |
 | [degradations/](degradations/) | Detailed usage, method and caveats of each degradation | When its parameters, command or behaviour change |
+| [commands.md](commands.md) | Commands for testing each feature from the command line (PowerShell, including versions that ask for input at run time) and their caveats | When commands or options are added or removed, or defaults or output files change |
 
 Conventions:
 

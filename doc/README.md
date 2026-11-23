@@ -14,6 +14,7 @@
 | [decisions/](decisions/README.md) | 关键决策记录：一个决定一个文件，写清背景、决定、放弃了哪些方案、影响 | 做出（或推翻）一个关键决定时新建一份 |
 | [status/](status/) | 每周状态：一周一个文件，如 `2026-W47.md`；包括本周开发的功能的评判标准和核对结果 | 这一周里随时更新；每周一照 `status/template.md` 新建一份 |
 | [degradations/](degradations/) | 每种退化的详细用法、方法和注意事项 | 改了它的参数、命令或行为时 |
+| [commands.md](commands.md) | 在命令行里测试各功能用的命令（PowerShell，含运行时再输入的写法）和注意事项 | 增删命令、选项、默认值或输出文件改变时 |
 
 约定：
 
