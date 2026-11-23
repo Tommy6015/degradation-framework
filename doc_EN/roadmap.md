@@ -133,12 +133,16 @@ The research and justification (D1, D2) are written into the thesis alongside th
    Candidate methods: in the local GitHub folder `Rain-Generation-Python` (rain), `fog_simulation-SFSU_synthetic` (another synthetic fog),
    `physical_lens_soiling` (lens soiling by physics-based simulation), plus the already vendored Clear2Fog and camera_contamination_simulation.
 2. **How to extend the interface** (M3: masks, several versions per image, source and batch information, sequence consistency, intensity levels, unified output path) → decision 0007.
-3. **Dataset interface** (M6): common representation of images, sequences and annotations; copy annotations unchanged, or read them through the adapter and write them back;
+3. **The fog's atmospheric light for images without sky** (M3, F6, F9): currently, for images without sky, `degfw fog` uses the average over the images of the same batch that have sky,
+   and `degfw run fog` always uses 0.8. Roadside cameras often see no sky, so the result depends on which other images are in the batch, and may jump from frame to frame within a sequence.
+   Candidate approaches: make the atmospheric light a parameter that can be set directly (a given value or "auto"); estimate it once per camera or per sequence and share it;
+   make the sky distance threshold (currently 1000 m) adjustable. Details of the method: [degradations/fog.md](degradations/fog.md).
+4. **Dataset interface** (M6): common representation of images, sequences and annotations; copy annotations unchanged, or read them through the adapter and write them back;
    how to handle annotations of objects hidden by lens contamination; which subsets and cameras of the example dataset TUMTraf A9 to use.
-4. **Intensity levels**: how many levels, which parameters each level maps to, and on what basis (F4).
-5. **How to evaluate plausibility and usability**: which real data to compare with, which metrics (E1, E2).
+5. **Intensity levels**: how many levels, which parameters each level maps to, and on what basis (F4).
+6. **How to evaluate plausibility and usability**: which real data to compare with, which metrics (E1, E2).
    TSBOW and CoInfra in the local GitHub folder contain real adverse-weather data and are candidates for the comparison.
-6. **Which object detection method and metrics** (E4).
+7. **Which object detection method and metrics** (E4).
 
 ## Optional engineering improvements
 
