@@ -11,6 +11,14 @@ Method (unchanged from Clear2Fog):
   Fog density is set by the visibility (meteorological optical range) in metres:
   lower = denser fog.
 
+With LiDAR (`degfw fog --lidar PATH`, decision 0008): Depth Pro's metric scale can be
+far off (on the elevated TUMTraf A9 cameras its depth is ~8x too small, so the fog
+was much too weak for the visibility). If point clouds and calibration are found for
+an image, its depth map is multiplied by the median ratio LiDAR depth / Depth Pro
+depth at the projected points: Depth Pro gives the structure, the LiDAR the scale.
+Images without a point cloud (or with fewer than 50 points in view) keep Depth Pro's
+depth. Without --lidar nothing changes.
+
 Two ways to use it:
   - its own command (registered below), like Clear2Fog's c2f.py (only input,
     output, visibility):
@@ -50,6 +58,7 @@ import numpy as np
 
 from degradation_fw.core.base import Degradation
 from degradation_fw.core.io import load_rgb_u8, to_uint8, unique_stems
+from degradation_fw.core.lidar import MIN_POINTS, fit_depth_scale, project_points, read_pcd_xyz
 from degradation_fw.core.params import Bool, Int
 from degradation_fw.core.paths import import_third_party_package, third_party_dir, working_dir
 from degradation_fw.core.registry import register, register_command
@@ -132,15 +141,18 @@ class Clear2Fog:
         """Atmospheric light from the sky of this image, or None if it has no sky."""
         return self.fog.estimate_atmospheric_light(rgb_u8, depth, min_depth=MIN_SKY_DEPTH)
 
-    def set_average_light(self, image_paths: list[Path]) -> tuple[np.ndarray, int]:
+    def set_average_light(self, image_paths: list[Path], load=None) -> tuple[np.ndarray, int]:
         """As FogCamera.__init__: average sky light over up to 100 images (seeded sample).
-        Returns (light, number of images that had sky)."""
+        load(path) -> (rgb, depth); default self.load (pass another one to use the same
+        depth as for the fog, e.g. scaled with LiDAR). Returns (light, number of images
+        that had sky)."""
+        load = load or self.load
         paths = list(image_paths)
         if len(paths) > MAX_AVG_SAMPLES:
             paths = random.Random(SAMPLE_SEED).sample(paths, MAX_AVG_SAMPLES)
         lights = []
         for p in paths:
-            light = self.sky_light(*self.load(p))
+            light = self.sky_light(*load(p))
             if light is not None:
                 lights.append(light)
         if lights:
@@ -211,12 +223,50 @@ def collect_inputs(inputs: list[Path]) -> list[Path]:
     return list(dict.fromkeys(images))
 
 
-def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bool = False) -> int:
+def lidar_scaled_depth(depth: np.ndarray, views) -> tuple[np.ndarray, dict]:
+    """Depth Pro depth scaled to the LiDAR points of the image (decision 0008).
+    views: the image's LidarView list (e.g. TumTrafLidar.views_for). All point clouds
+    in view are used together. Returns (depth, record for fog_run.json); with no views
+    or fewer than MIN_POINTS points in view, the depth is returned unchanged and the
+    record says why."""
+    height, width = depth.shape
+    us, vs, zs, used, problems = [], [], [], [], []
+    for view in views:
+        if view.image_size != (width, height):
+            problems.append(f"{view.source}: calibration is for {view.image_size[0]}x{view.image_size[1]}, "
+                            f"image is {width}x{height}")
+            continue
+        if view.point_cloud is None:
+            problems.append(f"{view.point_cloud_name} not found")
+            continue
+        u, v, z = project_points(read_pcd_xyz(view.point_cloud), view.lidar_to_camera, view.camera_matrix,
+                                 width, height)
+        us.append(u)
+        vs.append(v)
+        zs.append(z)
+        used.append({"label": view.source, "point_cloud": view.point_cloud_name, "points_in_view": len(z)})
+    n = sum(len(z) for z in zs)
+    if not views or n < MIN_POINTS:
+        reason = ("no LiDAR frame lists this image" if not views
+                  else f"{n} LiDAR point(s) in view, fewer than {MIN_POINTS}")
+        return depth, {"source": "depth_pro", "lidar_not_used": "; ".join([reason, *problems])}
+    fit = fit_depth_scale(depth, np.concatenate(us), np.concatenate(vs), np.concatenate(zs))
+    record = {"source": "depth_pro+lidar_scale", "lidar_scale": round(fit.scale, 4), "lidar_points": fit.points,
+              "lidar_rel_error": {"median": round(fit.rel_error_median, 4), "p90": round(fit.rel_error_p90, 4)},
+              "lidar_frames": used}
+    if problems:
+        record["lidar_problems"] = problems
+    return (depth * fit.scale).astype(depth.dtype), record
+
+
+def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bool = False,
+            lidar: Path | None = None) -> int:
     """Fog every input image at every visibility. Output names as in c2f.py:
     <out>/foggy_<name>_vis_<v>.png, where an input whose name is already taken by an
     earlier one (same file name in another folder, or a.jpg next to a.png) gets
-    <name>_2, _3, ... instead of overwriting its results. Returns the number of
-    failed images."""
+    <name>_2, _3, ... instead of overwriting its results. lidar: folder with TUMTraf
+    label files and point clouds to correct the depth scale (decision 0008); None =
+    Depth Pro only, as before. Returns the number of failed images."""
     from PIL import Image
 
     try:
@@ -228,22 +278,43 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
     bad = [v for v in visibilities if v <= 0]
     if bad:
         raise SystemExit(f"Visibility must be > 0 m, got {bad}")
+    lidar_index = None
+    if lidar is not None:
+        from degradation_fw.datasets.tumtraf import TumTrafLidar
+
+        try:
+            lidar_index = TumTrafLidar(lidar)
+        except FileNotFoundError as e:
+            raise SystemExit(str(e)) from None
+        if not lidar_index.images:
+            raise SystemExit(f"No TUMTraf (OpenLABEL) label files with LiDAR frames found under {lidar}")
+        listed = sum(1 for p in images if lidar_index.views_for(p.name))
+        print(f"LiDAR: {lidar_index.label_files} label file(s), {len(lidar_index.point_clouds)} point cloud(s) "
+              f"under {lidar}; {listed} of {len(images)} input image(s) listed")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"{len(images)} image(s), visibility: {', '.join(f'{v} m' for v in visibilities)}")
 
+    def load(path):
+        """RGB, depth (scaled with LiDAR if available) and the depth record."""
+        rgb, depth = c2f.load(path)
+        if lidar_index is None:
+            return rgb, depth, {"source": "depth_pro"}
+        return (rgb, *lidar_scaled_depth(depth, lidar_index.views_for(path.name)))
+
     c2f = engine(fp16)
     average_done = False
     record = {"method": "Clear2Fog", "visibility_m": visibilities,
-              "depth_pro_precision": "float16" if fp16 else "float32", "images": {}}
+              "depth_pro_precision": "float16" if fp16 else "float32",
+              "lidar": str(lidar) if lidar is not None else None, "images": {}}
     failed = 0
     for i, (path, name) in enumerate(zip(images, unique_stems(images)), start=1):
         t = time.time()
         try:
-            rgb, depth = c2f.load(path)
+            rgb, depth, depth_record = load(path)
             light = c2f.sky_light(rgb, depth)
             if light is None and not average_done:
-                avg, n_sky = c2f.set_average_light(images)
+                avg, n_sky = c2f.set_average_light(images, load=lambda p: load(p)[:2])
                 average_done = True
                 record["average_light"] = {"value": [round(float(x), 4) for x in avg], "images_with_sky": n_sky}
                 print(f"  (no sky in {path.name}: average atmospheric light over the input set = "
@@ -258,8 +329,16 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
                 "outputs": outputs,
                 "atmospheric_light": "sky" if light is not None else "average of input set",
                 "depth_m": {"min": round(float(depth.min()), 2), "median": round(float(np.median(depth)), 2)},
+                "depth": depth_record,
             }
-            print(f"[{i}/{len(images)}] {path.name}: {time.time() - t:.1f} s"
+            if lidar_index is None:
+                lidar_note = ""
+            elif "lidar_scale" in depth_record:
+                lidar_note = (f"  (LiDAR: depth x {depth_record['lidar_scale']:.2f} from {depth_record['lidar_points']} "
+                              f"points, error {depth_record['lidar_rel_error']['median']:.1%})")
+            else:
+                lidar_note = f"  (LiDAR not used: {depth_record['lidar_not_used']} -> Depth Pro only)"
+            print(f"[{i}/{len(images)}] {path.name}: {time.time() - t:.1f} s" + lidar_note
                   + ("" if light is not None else "  (no sky -> average light)")
                   + ("" if name == path.stem else f"  (name already taken: saved as foggy_{name}_...)"))
         except Exception as e:  # keep going, like c2f.py
@@ -279,13 +358,17 @@ def _add_arguments(parser) -> None:
     parser.add_argument("--fp16", action="store_true",
                         help="run Depth Pro in float16: ~20x faster on an 8 GB GPU, results differ slightly "
                              "from Clear2Fog (default float32 = identical)")
+    parser.add_argument("--lidar", type=Path, metavar="FOLDER",
+                        help="correct the depth scale with LiDAR point clouds: folder with TUMTraf (A9) OpenLABEL "
+                             "label files (.json) and point clouds (.pcd), searched recursively, e.g. the dataset "
+                             "root; images without a point cloud keep Depth Pro's depth")
 
 
 def _run_command(args) -> int:
     reason = Fog.unavailable_reason()
     if reason:
         raise SystemExit(f"fog cannot run here:\n{reason}")
-    return 1 if run_cli(args.input, args.output, args.visibility, fp16=args.fp16) else 0
+    return 1 if run_cli(args.input, args.output, args.visibility, fp16=args.fp16, lidar=args.lidar) else 0
 
 
 register_command(

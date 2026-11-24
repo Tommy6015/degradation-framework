@@ -32,12 +32,17 @@ flowchart TB
         io["io.py<br/>image I/O"]
         weights["weights.py<br/>weights list"]
         paths["paths.py<br/>third-party<br/>loading"]
+        lidar["lidar.py<br/>point<br/>projection"]
     end
 
     subgraph L3["Adapters degradations/"]
         fog["weather/<br/>fog.py"]
         noise["sensor/<br/>gaussian_<br/>noise.py"]
         lens["lens/<br/>lens_dirt.py<br/>(to do)"]
+    end
+
+    subgraph L5["Dataset readers datasets/"]
+        tumtraf["tumtraf.py<br/>TUMTraf points<br/>and calibration"]
     end
 
     subgraph L4["Third-party code third_party/"]
@@ -50,16 +55,20 @@ flowchart TB
     L3 -->|"«use»"| L2
     L2 -.->|"«import» register"| L3
     L3 -.->|"«import» on demand"| L4
+    L3 -.->|"«import» on demand"| L5
+    L5 -->|"«use»"| L2
     L1 -.->|"«import» on demand"| L4
 
     classDef layer1 fill:#E3F2FD,stroke:#1E88E5,color:#0D2A4A
     classDef layer2 fill:#E8F5E9,stroke:#43A047,color:#12361A
     classDef layer3 fill:#FFF3E0,stroke:#FB8C00,color:#4A2B00
     classDef layer4 fill:#F3E5F5,stroke:#8E24AA,color:#3A0F45
+    classDef layer5 fill:#E0F2F1,stroke:#00897B,color:#00332E
     class cli,main,gui,scripts layer1
-    class pipeline,registry,base,params,io,weights,paths layer2
+    class pipeline,registry,base,params,io,weights,paths,lidar layer2
     class fog,noise,lens layer3
     class c2f,ccs,wyaml layer4
+    class tumtraf layer5
 ```
 
 Legend: solid = imported at start-up; dashed = imported at run time, when first needed.
@@ -70,6 +79,7 @@ Labels on the arrows: «use» = calls / inherits from the layer below; «import�
 - **Adapters** depend only on the core. Third-party code is loaded only through `core/paths.py`, and only when needed: if a third-party repository lacks dependencies or weights,
   only its own degradation is marked unavailable (`degfw list` gives the reason); nothing else is affected.
 - The **entry layer** contains no code for specific degradations: `degfw run <name>` works for every degradation; a degradation that needs its own command registers it itself (e.g. `degfw fog`).
+- **Dataset readers** `datasets/`: turn a dataset's files and calibration into the framework's common form (e.g. `LidarView` in `core/lidar.py`). For now only TUMTraf point clouds and calibration, used by `degfw fog --lidar` ([decision 0008](decisions/0008-fog-lidar-depth-scale.md)); the dataset adapter interface of M6 will also go here.
 - Lens contamination can currently only be run through `scripts/contamination_examples.py`; it is not integrated into the framework yet.
 
 ### Dependencies of each module
@@ -86,9 +96,10 @@ Labels on the arrows: «use» = calls / inherits from the layer below; «import�
 | `core/registry.py` | core.base; at the first lookup: degradations | |
 | `core/base.py` | core.params; when needed: core.weights | |
 | `core/weights.py` | core.paths | Reads `third_party/weights.yaml` |
-| `core/io.py`, `core/params.py`, `core/paths.py` | none | |
+| `core/io.py`, `core/params.py`, `core/paths.py`, `core/lidar.py` | none | |
+| `datasets/tumtraf.py` | core.lidar | Reads TUMTraf OpenLABEL labels and point cloud file names |
 | `degradations/__init__.py` | weather.fog, sensor.gaussian_noise | Importing registers them |
-| `degradations/weather/fog.py` | core.base, core.params, core.registry, core.io, core.paths, core.weights; when needed: Clear2Fog | |
+| `degradations/weather/fog.py` | core.base, core.params, core.registry, core.io, core.paths, core.weights, core.lidar; when needed: Clear2Fog, datasets.tumtraf | |
 | `degradations/sensor/gaussian_noise.py` | core.base, core.params, core.registry | |
 | `scripts/contamination_examples.py` | core.paths, core.weights; camera_contamination_simulation | |
 
@@ -238,15 +249,21 @@ sequenceDiagram
     participant DP as Depth Pro
     participant FC as FogCamera
 
-    UF->>F: degfw fog -i input -o output -v visibility
+    UF->>F: degfw fog -i input -o output -v visibility [--lidar folder]
     F->>F: collect_inputs, unique_stems (_2 if the name is taken)
     F->>E: engine(fp16)
     Note over E,DP: Depth Pro is loaded at the first call (about 10 s)
+    opt --lidar given
+        F->>F: TumTrafLidar(folder): index labels and point clouds
+    end
     loop each image
         F->>E: load(path)
         E->>DP: infer(upright RGB, EXIF focal length)
         DP-->>E: depth (metres)
         E-->>F: RGB, depth
+        opt --lidar given, points found
+            F->>F: lidar_scaled_depth: project points, depth × scale
+        end
         F->>E: sky_light(RGB, depth)
         E->>FC: estimate_atmospheric_light (only pixels ≥ 1000 m)
         FC-->>E: atmospheric light, None without sky
@@ -280,7 +297,7 @@ The system's actual input is only the data to be processed; everything else eith
 
 | Category | What | Changes between runs? | Given by |
 |---|---|---|---|
-| **Input data** | Images: a single file or a folder (including subfolders), .png .jpg .jpeg .bmp .tif .tiff .webp. Later, sequences and annotations of various datasets, read through dataset adapters (M6; first example TUMTraf A9) | Yes | `-i` |
+| **Input data** | Images: a single file or a folder (including subfolders), .png .jpg .jpeg .bmp .tif .tiff .webp. Later, sequences and annotations of various datasets, read through dataset adapters (M6; first example TUMTraf A9). Optional: LiDAR point clouds and calibration, for now only used by the fog (TUMTraf OpenLABEL labels) | Yes | `-i`; point clouds: `degfw fog --lidar` |
 | **Configuration** | Which degradations, their parameters, the seed | Yes | Configuration file `configs/*.yaml` (`degfw apply -c`). `degfw run name -p param=value --seed N` and the GUI controls are shorthands for the same thing |
 | **Resources** | Model weights (`third_party/weights.yaml`), code version and dependencies (git commit, `uv.lock`) | No, part of the runtime environment | `uv sync`, `uv run degfw weights --download` |
 | **Output location** | Where the results are written | Yes | `-o` |
@@ -337,7 +354,7 @@ outputs/fog/
 ```
 
 Differences to 4.2: only the .png .jpg .jpeg files directly in each folder are read (no subfolders); all results go into one folder; one image per visibility, with the depth computed only once;
-the EXIF focal length is used if present; images without sky use the average atmospheric light of the whole input set.
+the EXIF focal length is used if present; images without sky use the average atmospheric light of the whole input set; with `--lidar`, point clouds correct the scale of the depth.
 
 Fields of `fog_run.json`:
 
@@ -346,12 +363,13 @@ Fields of `fog_run.json`:
 | `method` | `"Clear2Fog"` |
 | `visibility_m` | The visibilities of the run (metres) |
 | `depth_pro_precision` | `"float32"` or `"float16"` |
+| `lidar` | The folder given with `--lidar`, `null` without it |
 | `average_light` | Only if an image without sky occurred: value of the average atmospheric light and the number of images with sky it was computed from |
-| `images` | One entry per input, keyed by the name used for its outputs (e.g. `0001`, `0001_2`): `source` (path of the original), `outputs` (its output files), `atmospheric_light` (`sky` or `average of input set`), `depth_m` (minimum and median depth) |
+| `images` | One entry per input, keyed by the name used for its outputs (e.g. `0001`, `0001_2`): `source` (path of the original), `outputs` (its output files), `atmospheric_light` (`sky` or `average of input set`), `depth_m` (minimum and median depth, after the correction if LiDAR was used), `depth` (depth source: `depth_pro` or `depth_pro+lidar_scale`; with LiDAR the scale `lidar_scale`, number of points `lidar_points`, error after correction `lidar_rel_error`, labels and point clouds used `lidar_frames`; otherwise the reason `lidar_not_used`) |
 
 ### 4.4 Not possible yet
 
-- **Only images: no annotations, no sequences**: how sequences and annotations of various datasets are read through dataset adapters and exported together with the degraded images
+- **Only images: no object annotations, no sequences** (the fog can additionally read TUMTraf point clouds and calibration, see 3.2): how sequences and annotations of various datasets are read through dataset adapters and exported together with the degraded images
   is part of M6 (first example TUMTraf A9);
   keeping degradations consistent across the frames of a sequence is part of M3 (see [roadmap.md](roadmap.md), F1, F6, F8 in [requirements.md](requirements.md)).
 - **A degradation can only output one image**: masks of lens contamination cannot be output yet; this is the interface question M3 has to decide first.

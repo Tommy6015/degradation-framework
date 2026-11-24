@@ -7,4 +7,5 @@ pipeline.py  chain degradations, batch folders, save metadata
 io.py        image load / save / format conversion
 paths.py     project paths; the only way to load third_party code (see its docstring)
 weights.py   model weights listed in third_party/weights.yaml: find, verify, download
+lidar.py     LiDAR points as depth measurements: read PCD, project into an image, fit a depth scale
 """

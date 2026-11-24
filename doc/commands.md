@@ -31,7 +31,7 @@ $tag = "261123_01"                                   # 这次试验的编号，�
 | `uv run degfw weights` | 查看模型权重在不在；`--verify` 校验 SHA-256，`--download` 下载缺的权重 |
 | `uv run degfw run <名字>` | 运行单个退化，不用配置文件，参数用 `-p` 给 |
 | `uv run degfw apply -c <配置>` | 按配置文件串联多个退化 |
-| `uv run degfw fog` | 雾的专门命令，用法同原版 `c2f.py` |
+| `uv run degfw fog` | 雾的专门命令，用法同原版 `c2f.py`；有 LiDAR 点云时可加 `--lidar` 校正景深 |
 | `uv run degfw gui` | 图形界面（要先运行 `uv sync --extra gui`） |
 | `uv run python scripts/contamination_examples.py` | 镜头污染：水滴、不透明污渍、半透明污渍 |
 | `uv run pytest` | 运行测试 |
@@ -91,6 +91,16 @@ $v = (Read-Host "能见度（米，可输入多个，空格分隔）") -split '\
 uv run degfw fog -i $src -o "$out\Fog\$tag" -v $v
 ```
 
+有 LiDAR 点云时（TUMTraf 数据集），加 `--lidar`，用点云校正景深的尺度：
+
+```powershell
+# Demo：图片、点云、标注都在同一个文件夹
+uv run degfw fog -i "$src\a9_dataset_r02_s03_Demo" -o "$out\Fog_lidar\$tag" -v 100 --fp16 --lidar "$src\a9_dataset_r02_s03_Demo"
+
+# 完整数据集：-i 给一台相机的图片文件夹，--lidar 给数据集根目录
+uv run degfw fog -i "$src\a9_dataset_r02_s03\images\s110_camera_basler_south2_8mm" -o "$out\Fog_lidar\$tag" -v 100 --fp16 --lidar "$src\a9_dataset_r02_s03"
+```
+
 注意：
 - **强度：**
   - `-v` 是能见度，单位是米，只能是整数，数值越小雾越浓。不写 `-v` 时默认是 100。
@@ -113,6 +123,14 @@ uv run degfw fog -i $src -o "$out\Fog\$tag" -v $v
     平均值，以及它是用几张图算出来的，记在 `fog_run.json` 里。
   - **要小心：** 同一张没有天空的图放进不同的批次，雾的颜色可能不同；序列里也可能逐帧跳变。
     正式生成数据集前要解决这个问题，见 [roadmap 的"要决定的事"第 3 条](roadmap.md#要决定的事)。
+- **`--lidar`（用点云校正景深）：**
+  - **为什么要用：** 只用 Depth Pro 时，路侧相机上的景深被估小约 8 倍，雾比标称能见度弱很多：标称 100 m，看起来约 800 m。
+    有点云就加上，详见 [degradations/fog.md](degradations/fog.md) 和[决策 0008](decisions/0008-fog-lidar-depth-scale.md)。
+  - **开头一行** `LiDAR: ... 5 of 5 input image(s) listed`：输入的图里有几张在标注里找到了对应的点云。
+  - **每张图一行** `LiDAR: depth x 8.18 from 4829 points, error 2.3%`：景深乘了多少、用了多少个点、校正后的误差。
+    显示 `LiDAR not used: 原因 -> Depth Pro only` 时，这张图只用了 Depth Pro。
+  - **只有 `degfw fog` 能用**，`degfw run fog` 不能（要等 M3）。
+  - **时间：** 每张图约 2 秒（加 `--fp16`）。完整数据集一台相机有 1033 张，全部跑完要半个多小时。
 - 方法和参数的细节见 [degradations/fog.md](degradations/fog.md)。
 
 ## 5. 镜头污染：`scripts/contamination_examples.py`
@@ -278,3 +296,4 @@ uv run python scripts/contamination_examples.py $a --image $src --out "$out\Semi
 | 污染脚本提示 `x and y must be in 0..1, size in (0, 1]` 之类 | 数值超出范围，按提示改；这时不会生成任何图 |
 | `degfw gui` 提示 `GUI not installed` | 先运行 `uv sync --extra gui` |
 | 雾跑得很慢（每张约 20 秒） | 没加 `--fp16`，见第 4 节 |
+| 加了 `--lidar`，提示 `No TUMTraf (OpenLABEL) label files with LiDAR frames found` | 给的文件夹里（包括子文件夹）没有 TUMTraf 的标注文件。检查路径，一般给数据集的根目录 |

@@ -31,6 +31,7 @@ degradation-framework/
 │   │   ├── pipeline.py               多个退化串联、批量处理、保存元数据
 │   │   ├── io.py                     图片读写、格式转换（支持中文路径）
 │   │   ├── paths.py                  项目路径；加载 third_party 代码的唯一入口
+│   │   ├── lidar.py                  读点云、投影到图像、用点云校正景深的尺度
 │   │   └── weights.py                读 weights.yaml：查找、校验、下载权重
 │   │
 │   ├── degradations/               ③ 适配器：把开源代码包装成统一接口，按类别分
@@ -42,6 +43,7 @@ degradation-framework/
 │   │   └── sensor/                   传感器 / 成像
 │   │       └── gaussian_noise.py       高斯噪声（示例，验证框架用）
 │   │
+│   ├── datasets/                   数据集读取（现在：TUMTraf 的点云和标定，供 degfw fog --lidar）
 │   ├── gui/                        界面（暂缓；已有一个能跑的 Gradio 初版）
 │   └── cli.py                      命令行入口（不含任何具体退化的代码）
 │
@@ -83,7 +85,7 @@ degradation-framework/
 
 | 退化 | 说明 | 详细用法 |
 |---|---|---|
-| `fog` | 雾：Clear2Fog（Depth Pro 景深 + 大气散射），有自己的命令 `uv run degfw fog -i 输入 -o 输出 -v 100` | [doc/degradations/fog.md](doc/degradations/fog.md) |
+| `fog` | 雾：Clear2Fog（Depth Pro 景深 + 大气散射），有自己的命令 `uv run degfw fog -i 输入 -o 输出 -v 100`；有 LiDAR 点云时加 `--lidar` 校正景深 | [doc/degradations/fog.md](doc/degradations/fog.md) |
 | `gaussian_noise` | 高斯噪声，示例，用来验证框架 | 参数见 `uv run degfw list` |
 | 镜头污染 | 还没接入框架，目前用 `scripts/contamination_examples.py` 单独运行 | [scripts/README.md](scripts/README.md) |
 

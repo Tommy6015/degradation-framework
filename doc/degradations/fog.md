@@ -20,6 +20,28 @@ uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
 - 和其他退化一样也可以用 `uv run degfw run fog -i 输入 -o 输出 -p visibility=50`，
   或在 YAML 流程里：`- name: fog` + `params: {visibility: 50, fp16: true}`。
 
+## 用 LiDAR 校正景深（`--lidar`）
+
+如果同时有 LiDAR 点云和标定，加上 `--lidar 文件夹`，景深的尺度就由点云校正（[决策 0008](../decisions/0008-fog-lidar-depth-scale.md)）。
+不加时和上面完全一样。
+
+```bash
+uv run degfw fog -i a9_dataset_r02_s03/images/s110_camera_basler_south2_8mm -o 输出文件夹 -v 100 --lidar a9_dataset_r02_s03
+```
+
+- **为什么需要：** Depth Pro 在高处俯拍的路侧相机上会把距离严重估小。
+  在 TUMTraf A9 上，它的景深只有 LiDAR 实测的约 1/8，所以标称能见度 100 m 的雾，看起来只相当于约 800 m。
+  它的相对结构是对的，错的主要是整体尺度。
+- **怎么做：** 把这张图对应的点云投影到图上，尺度 = 中位数(LiDAR 景深 ÷ Depth Pro 景深)，景深 = Depth Pro × 尺度；
+  之后的大气光和加雾不变。Depth Pro 给结构，LiDAR 给真实尺度。
+- **`--lidar` 给什么：** 一个文件夹，里面（包括子文件夹）有 TUMTraf 的 OpenLABEL 标注（`.json`）和点云（`.pcd`），
+  一般给数据集的根目录。图片和点云、标定的对应关系，以及标定本身，都从标注里读：
+  标注里的 `image_file_names` 列出了和这一帧点云一起拍的图片。同一张图有几台 LiDAR，就把几台的点都用上。
+- **退回：** 找不到这张图的点云、图里的点少于 50 个，或者标定对应的图像尺寸和图片不同时，这张图只用 Depth Pro，终端会写明原因。
+- **记录：** 每张图在 `fog_run.json` 的 `depth` 里记下景深来源、尺度、用到的点数、校正后的残差，以及用到的标注和点云文件。
+- **只在 `degfw fog` 里能用：** `degfw run fog`、配置文件和 GUI 暂时不行，因为退化接口拿不到图片的来源，要等 M3。
+- **目前只认 TUMTraf 的标注格式：** 接别的数据集，要在 `degradation_fw/datasets/` 里再写一个读取器。
+
 ## 参数
 
 | 参数 | 类型 | 默认 | 说明 |
@@ -29,7 +51,7 @@ uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
 
 ## 方法（与 Clear2Fog 相同）
 
-1. Depth Pro 从单张图估算以米为单位的景深。
+1. Depth Pro 从单张图估算以米为单位的景深。给了 `--lidar` 时，再乘以由点云算出的尺度（见上一节）。
 2. 大气光 L：暗通道先验，只在 ≥ 1000 m 的像素（天空）里找；亮度限制在 [162, 220] / 255，取灰色。
    没有天空的图用整批输入图（最多 100 张）的平均大气光，都没有天空时用 0.8。
 3. Koschmieder 定律：t = exp(-β · 景深)，β = -ln(0.05) / 能见度；有雾图 = 原图 · t + L · (1 - t)。
@@ -43,7 +65,7 @@ uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
 - 带方向标记的照片先转正，RGB 和景深来自同一份像素（[决策 0004](../decisions/0004-exif-orientation.md)）。
 - 平均大气光只在遇到没有天空的图时才计算，抽样用固定种子（`c2f.py`：总是在开始时计算，抽样不固定）；输入不超过 100 张时就是全部图片，和 `c2f.py` 相同。
 - 一次给多个能见度时，每张图的景深只算一次。
-- 不经过 Clear2Fog 的 `src/fog_pipeline/__init__.py`，所以不需要它的 LiDAR 部分和 PyQt5。
+- 不经过 Clear2Fog 的 `src/fog_pipeline/__init__.py`，所以不需要它的 LiDAR 部分和 PyQt5。那部分是给点云本身加雾，和上面用 LiDAR 校正相机景深是两回事。
 - 同名输入的输出名加 `_2`、`_3`（[决策 0005](../decisions/0005-output-name-collisions.md)）；`c2f.py` 会覆盖。
 
 ## `degfw fog` 和 `degfw run fog` 的区别
@@ -52,6 +74,7 @@ uv run degfw fog -i 输入图片或文件夹 -o 输出文件夹 -v 100
 |---|---|---|
 | 焦距 | 用文件 EXIF 里的焦距（有的话） | 由 Depth Pro 估算（框架的退化接口只拿到像素） |
 | 没有天空的图 | 整批输入图的平均大气光 | 固定用 0.8 |
+| LiDAR 校正景深 | `--lidar` | 暂时不能用（M3） |
 | 输出 | `foggy_*_vis_*.png` + `fog_run.json` | 和其他退化一样：同名 `.png` + `.json` |
 
 所以带 EXIF 焦距的照片、或者没有天空的图，两种方式的结果可能不同。

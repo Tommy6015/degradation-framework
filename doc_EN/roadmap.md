@@ -80,12 +80,12 @@ white dotted box = user of the data outside the thesis. Solid arrow = working; d
 |---|---|---|---|
 | Dataset adapters | Connect different datasets' organisation (images, sequences) and annotation formats to the framework's common representation, and write them back in the original format on export; the framework is not tied to any one dataset, adding a dataset means adding one adapter | F1, F2, F8, N1 | Planned (M6) |
 | Image folder | Plain images without annotations; can be processed today | F1 | ✅ |
-| TUMTraf A9 | Roadside infrastructure camera dataset; the first adapter, as an example | F1 | Planned (M6) |
+| TUMTraf A9 | Roadside infrastructure camera dataset; the first adapter, as an example | F1 | Point clouds and calibration can be read, used by the fog to correct the depth (`degfw fog --lidar`); adapter for images, sequences, annotations planned (M6) |
 | Other datasets | Adapters added as needed | F1 | — |
 | Config | Dataset / subset, degradation types, intensity levels and seed are all written in a configuration file | F2, F4, F10 | Degradations, parameters, seed ✅; subset, intensity ❌ |
 | Unified interface and pipeline | Parameter checks, per-image seeds, batch processing, metadata | F5, F9, N1 | Done (M0, M2) |
 | Preview | See the effect before generating a whole dataset | F7 | Initial Gradio version, to be brought up to date (M7) |
-| Fog | Clear2Fog: monocular depth + atmospheric scattering model | F3 | Done (M1) |
+| Fog | Clear2Fog: monocular depth + atmospheric scattering model; with LiDAR, the point clouds correct the depth scale | F3 | Done (M1); LiDAR correction 11-24 ([decision 0008](decisions/0008-fog-lidar-depth-scale.md)) |
 | Snow, exposure, blur | The remaining global degradations | F3 | Planned (M5) |
 | Soiling, water drops | Lens contamination: opaque / semi-transparent soiling, water drops | F3 | Code vendored, integration in progress (M4) |
 | Occlusion | Local degradation | F3 | Planned (M4) |
@@ -140,6 +140,8 @@ The research and justification (D1, D2) are written into the thesis alongside th
 4. **Dataset interface** (M6): common representation of images, sequences and annotations; copy annotations unchanged, or read them through the adapter and write them back;
    how to handle annotations of objects hidden by lens contamination; which subsets and cameras of the example dataset TUMTraf A9 to use.
 5. **Intensity levels**: how many levels, which parameters each level maps to, and on what basis (F4).
+   For the fog's visibility to be trustworthy, the depth scale must be right: with Depth Pro alone, the depth on roadside cameras is about 8 times too small ([decision 0008](decisions/0008-fog-lidar-depth-scale.md)).
+   Datasets with LiDAR use `--lidar`; what to do without LiDAR (e.g. a scale from the camera calibration and the ground plane) is decided here as well.
 6. **How to evaluate plausibility and usability**: which real data to compare with, which metrics (E1, E2).
    TSBOW and CoInfra in the local GitHub folder contain real adverse-weather data and are candidates for the comparison.
 7. **Which object detection method and metrics** (E4).

@@ -31,7 +31,7 @@ $tag = "261123_01"                                   # ID of this test run; use 
 | `uv run degfw weights` | Shows whether the model weights are present; `--verify` checks the SHA-256, `--download` downloads missing weights |
 | `uv run degfw run <name>` | Runs a single degradation, without a configuration file; parameters are given with `-p` |
 | `uv run degfw apply -c <config>` | Chains several degradations as described in a configuration file |
-| `uv run degfw fog` | The fog's own command, used like the original `c2f.py` |
+| `uv run degfw fog` | The fog's own command, used like the original `c2f.py`; with LiDAR point clouds, `--lidar` corrects the depth |
 | `uv run degfw gui` | Graphical interface (run `uv sync --extra gui` first) |
 | `uv run python scripts/contamination_examples.py` | Lens contamination: water drops, opaque soiling, semi-transparent soiling |
 | `uv run pytest` | Runs the tests |
@@ -91,6 +91,16 @@ $v = (Read-Host "Visibility (metres, several allowed, separated by spaces)") -sp
 uv run degfw fog -i $src -o "$out\Fog\$tag" -v $v
 ```
 
+With LiDAR point clouds (TUMTraf dataset), add `--lidar` to correct the depth scale with the point clouds:
+
+```powershell
+# demo: images, point clouds and labels in the same folder
+uv run degfw fog -i "$src\a9_dataset_r02_s03_Demo" -o "$out\Fog_lidar\$tag" -v 100 --fp16 --lidar "$src\a9_dataset_r02_s03_Demo"
+
+# full dataset: -i is the image folder of one camera, --lidar the dataset root
+uv run degfw fog -i "$src\a9_dataset_r02_s03\images\s110_camera_basler_south2_8mm" -o "$out\Fog_lidar\$tag" -v 100 --fp16 --lidar "$src\a9_dataset_r02_s03"
+```
+
 Caveats:
 - **Intensity:**
   - `-v` is the visibility in metres, integers only; the smaller the value, the denser the fog. Without `-v` the default is 100.
@@ -113,6 +123,14 @@ Caveats:
     The average, and how many images it was computed from, are recorded in `fog_run.json`.
   - **Watch out:** the same image without sky can get a different fog colour in different batches, and in a sequence the fog may jump from frame to frame.
     This has to be solved before a dataset is generated; see [open decision 3 in the roadmap](roadmap.md#open-decisions).
+- **`--lidar` (depth corrected with point clouds):**
+  - **Why:** with Depth Pro alone, the depth on roadside cameras is about 8 times too small, so the fog is much weaker than the nominal visibility: nominal 100 m looks like about 800 m.
+    Add it whenever point clouds are available; details in [degradations/fog.md](degradations/fog.md) and [decision 0008](decisions/0008-fog-lidar-depth-scale.md).
+  - **The first line** `LiDAR: ... 5 of 5 input image(s) listed`: how many input images have a point cloud in the labels.
+  - **One line per image** `LiDAR: depth x 8.18 from 4829 points, error 2.3%`: the factor applied to the depth, the number of points used, the error after correction.
+    `LiDAR not used: reason -> Depth Pro only` means this image used Depth Pro only.
+  - **Only `degfw fog`** supports it, `degfw run fog` does not (waits for M3).
+  - **Time:** about 2 seconds per image (with `--fp16`). The full dataset has 1033 images per camera, so a full run takes over half an hour.
 - The method and parameters in detail: [degradations/fog.md](degradations/fog.md).
 
 ## 5. Lens contamination: `scripts/contamination_examples.py`
@@ -278,3 +296,4 @@ Three things to watch out for:
 | The contamination script says something like `x and y must be in 0..1, size in (0, 1]` | A value is out of range; correct it as the message says. No image is generated in this case |
 | `degfw gui` says `GUI not installed` | Run `uv sync --extra gui` first |
 | Fog is very slow (about 20 seconds per image) | `--fp16` is missing, see section 4 |
+| With `--lidar`: `No TUMTraf (OpenLABEL) label files with LiDAR frames found` | The given folder (including subfolders) contains no TUMTraf label files. Check the path; usually give the dataset root |

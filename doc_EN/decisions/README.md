@@ -22,3 +22,6 @@ Everyday bug fixes and small refactorings need no record; the commit history is 
 | [0003](0003-folder-seeds.md) | In folder runs, each image's seed is derived from (seed, relative path) | Accepted | 2026-11-19 |
 | [0004](0004-exif-orientation.md) | Images are turned upright by EXIF orientation when read; RGB and depth of the fog come from the same pixels | Accepted | 2026-11-19 |
 | [0005](0005-output-name-collisions.md) | Taken output names get `_2`, `_3` instead of overwriting | Accepted | 2026-11-19 |
+| [0008](0008-fog-lidar-depth-scale.md) | Fog depth: with LiDAR, the point cloud corrects the scale of Depth Pro (`degfw fog --lidar`) | Accepted | 2026-11-24 |
+
+0006 (choice of degradations) and 0007 (interface extension) are reserved in the [roadmap](../roadmap.md)'s open decisions and not written yet.

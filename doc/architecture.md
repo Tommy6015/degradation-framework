@@ -32,12 +32,17 @@ flowchart TB
         io["io.py<br/>图片读写"]
         weights["weights.py<br/>权重清单"]
         paths["paths.py<br/>第三方加载"]
+        lidar["lidar.py<br/>点云投影"]
     end
 
     subgraph L3["适配器 degradations/"]
         fog["weather/<br/>fog.py"]
         noise["sensor/<br/>gaussian_<br/>noise.py"]
         lens["lens/<br/>lens_dirt.py<br/>（待实现）"]
+    end
+
+    subgraph L5["数据集读取 datasets/"]
+        tumtraf["tumtraf.py<br/>TUMTraf<br/>点云和标定"]
     end
 
     subgraph L4["第三方代码 third_party/"]
@@ -50,16 +55,20 @@ flowchart TB
     L3 -->|"«use»"| L2
     L2 -.->|"«import» 注册"| L3
     L3 -.->|"«import» 按需"| L4
+    L3 -.->|"«import» 按需"| L5
+    L5 -->|"«use»"| L2
     L1 -.->|"«import» 按需"| L4
 
     classDef layer1 fill:#E3F2FD,stroke:#1E88E5,color:#0D2A4A
     classDef layer2 fill:#E8F5E9,stroke:#43A047,color:#12361A
     classDef layer3 fill:#FFF3E0,stroke:#FB8C00,color:#4A2B00
     classDef layer4 fill:#F3E5F5,stroke:#8E24AA,color:#3A0F45
+    classDef layer5 fill:#E0F2F1,stroke:#00897B,color:#00332E
     class cli,main,gui,scripts layer1
-    class pipeline,registry,base,params,io,weights,paths layer2
+    class pipeline,registry,base,params,io,weights,paths,lidar layer2
     class fog,noise,lens layer3
     class c2f,ccs,wyaml layer4
+    class tumtraf layer5
 ```
 
 图例：实线 = 启动时就导入；虚线 = 运行时第一次用到才导入。
@@ -70,6 +79,7 @@ flowchart TB
 - **适配器**只依赖核心层。第三方代码只通过 `core/paths.py` 加载，而且只在用到时加载：一个第三方仓库缺依赖或缺权重，
   只会让它自己的退化标为不可用（`degfw list` 写明原因），不影响其他部分。
 - **入口层**里没有具体退化的代码：`degfw run <名字>` 对所有退化通用；个别退化需要专门命令时自己注册（如 `degfw fog`）。
+- **数据集读取** `datasets/`：把某个数据集的文件和标定整理成框架通用的形式（如 `core/lidar.py` 的 `LidarView`）。现在只有 TUMTraf 的点云和标定，供 `degfw fog --lidar` 用（[决策 0008](decisions/0008-fog-lidar-depth-scale.md)）；M6 的数据集适配器接口也会放在这里。
 - 镜头污染目前只能通过 `scripts/contamination_examples.py` 运行，还没有接入框架。
 
 ### 各模块的依赖明细
@@ -86,9 +96,10 @@ flowchart TB
 | `core/registry.py` | core.base；第一次查询时：degradations | |
 | `core/base.py` | core.params；用到时：core.weights | |
 | `core/weights.py` | core.paths | 读 `third_party/weights.yaml` |
-| `core/io.py`、`core/params.py`、`core/paths.py` | 无 | |
+| `core/io.py`、`core/params.py`、`core/paths.py`、`core/lidar.py` | 无 | |
+| `datasets/tumtraf.py` | core.lidar | 读 TUMTraf 的 OpenLABEL 标注和点云文件名 |
 | `degradations/__init__.py` | weather.fog、sensor.gaussian_noise | 导入即注册 |
-| `degradations/weather/fog.py` | core.base、core.params、core.registry、core.io、core.paths、core.weights；用到时：Clear2Fog | |
+| `degradations/weather/fog.py` | core.base、core.params、core.registry、core.io、core.paths、core.weights、core.lidar；用到时：Clear2Fog、datasets.tumtraf | |
 | `degradations/sensor/gaussian_noise.py` | core.base、core.params、core.registry | |
 | `scripts/contamination_examples.py` | core.paths、core.weights；camera_contamination_simulation | |
 
@@ -238,15 +249,21 @@ sequenceDiagram
     participant DP as Depth Pro
     participant FC as FogCamera
 
-    UF->>F: degfw fog -i 输入 -o 输出 -v 能见度
+    UF->>F: degfw fog -i 输入 -o 输出 -v 能见度 [--lidar 文件夹]
     F->>F: collect_inputs、unique_stems（同名加 _2）
     F->>E: engine(fp16)
     Note over E,DP: 第一次调用时加载 Depth Pro（约 10 s）
+    opt 给了 --lidar
+        F->>F: TumTrafLidar(文件夹)：索引标注和点云
+    end
     loop 每张图片
         F->>E: load(路径)
         E->>DP: infer(转正后的 RGB, EXIF 焦距)
         DP-->>E: 景深（米）
         E-->>F: RGB、景深
+        opt 给了 --lidar，且找到这张图的点云
+            F->>F: lidar_scaled_depth：投影点云，景深 × 尺度
+        end
         F->>E: sky_light(RGB, 景深)
         E->>FC: estimate_atmospheric_light（只看 ≥ 1000 m 的像素）
         FC-->>E: 大气光，没有天空时为 None
@@ -280,7 +297,7 @@ sequenceDiagram
 
 | 类别 | 是什么 | 每次运行会变吗 | 从哪里给 |
 |---|---|---|---|
-| **输入数据** | 图片：单个文件或文件夹（连子文件夹），支持 .png .jpg .jpeg .bmp .tif .tiff .webp。以后经数据集适配器读入各种数据集的序列和标注（M6，第一个示例是 TUMTraf A9） | 会 | `-i` |
+| **输入数据** | 图片：单个文件或文件夹（连子文件夹），支持 .png .jpg .jpeg .bmp .tif .tiff .webp。以后经数据集适配器读入各种数据集的序列和标注（M6，第一个示例是 TUMTraf A9）。可选：LiDAR 点云和标定，现在只有雾用（TUMTraf 的 OpenLABEL 标注） | 会 | `-i`；点云：`degfw fog --lidar` |
 | **配置** | 用哪些退化、各自的参数、种子 | 会 | 配置文件 `configs/*.yaml`（`degfw apply -c`）。`degfw run 名字 -p 参数=值 --seed N` 和 GUI 控件是同一类东西的简便写法 |
 | **资源** | 模型权重（`third_party/weights.yaml`）、代码版本和依赖（git 提交、`uv.lock`） | 不会，属于运行环境 | `uv sync`、`uv run degfw weights --download` |
 | **输出位置** | 结果写到哪里 | 会 | `-o` |
@@ -337,7 +354,7 @@ outputs/fog/
 ```
 
 和 4.2 的区别：只读文件夹本层的 .png .jpg .jpeg（不进子文件夹）；所有结果放在同一个文件夹；每个能见度各出一张，景深只算一次；
-有 EXIF 焦距就用上；没有天空的图用整批图的平均大气光。
+有 EXIF 焦距就用上；没有天空的图用整批图的平均大气光；加了 `--lidar` 时用点云校正景深的尺度。
 
 `fog_run.json` 的字段：
 
@@ -346,12 +363,13 @@ outputs/fog/
 | `method` | `"Clear2Fog"` |
 | `visibility_m` | 这次的能见度列表（米） |
 | `depth_pro_precision` | `"float32"` 或 `"float16"` |
+| `lidar` | `--lidar` 给的文件夹，没给时为 `null` |
 | `average_light` | 只在有图没有天空时出现：平均大气光的值，以及其中有天空的图片数 |
-| `images` | 每张输入一项，键是输出用的名字（如 `0001`、`0001_2`）：`source`（原图路径）、`outputs`（对应的输出文件）、`atmospheric_light`（`sky` 或 `average of input set`）、`depth_m`（景深的最小值和中位数） |
+| `images` | 每张输入一项，键是输出用的名字（如 `0001`、`0001_2`）：`source`（原图路径）、`outputs`（对应的输出文件）、`atmospheric_light`（`sky` 或 `average of input set`）、`depth_m`（景深的最小值和中位数，用了 LiDAR 时是校正后的）、`depth`（景深来源：`depth_pro` 或 `depth_pro+lidar_scale`；用了 LiDAR 时有尺度 `lidar_scale`、点数 `lidar_points`、校正后的误差 `lidar_rel_error`、用到的标注和点云 `lidar_frames`；没用上时有原因 `lidar_not_used`） |
 
 ### 4.4 现在还做不到的
 
-- **只处理图片，不读标注，也不处理序列**：各种数据集的序列和标注怎么经数据集适配器读入、怎么跟着退化后的图片一起输出，
+- **只处理图片，不读目标标注，也不处理序列**（雾可以额外读 TUMTraf 的点云和标定，见 3.2）：各种数据集的序列和标注怎么经数据集适配器读入、怎么跟着退化后的图片一起输出，
   是 M6 的事（第一个示例是 TUMTraf A9）；
   序列里各帧的退化保持一致是 M3 的事（见 [roadmap.md](roadmap.md)、[requirements.md](requirements.md) 的 F1、F6、F8）。
 - **退化只能输出一张图**：镜头污染的 mask 还输出不了，这是 M3 要先决定的接口问题。
