@@ -19,6 +19,12 @@ Contaminations are given as spots:  --opaque X Y SIZE  /  --semi X Y SIZE  /  --
   Y     vertical position,   0 = top edge,  1 = bottom edge
   SIZE  size relative to the longer image side (0.15 small, 0.5 already large)
 Repeat an option to add more spots of that type; all of them go onto ONE result image.
+Water droplets are placed exactly (decision 0009): the network only draws the shape, and the
+shape is moved so that the centroid of its droplet pixels lies on X Y; if it consists of
+several pieces, they move together. --droplet-placement network restores the original
+behaviour, where X Y are only a hint to the network (the droplet lands on average 4-20 % of
+the longer side away). For opaque and semi-transparent soiling X Y are still only a hint,
+and SIZE is only a hint for all three types.
 Only the types you give are run (--opaque-color / --opaque-gradient alone also count as
 --opaque at its default spot). Defaults (DEFAULT_SPOTS below):
   --droplet            without numbers -> that type at its default spot
@@ -63,6 +69,9 @@ Usage (from the repository root):
     # two semi spots, the first with its own opacity (4th number), the second with --semi-opacity
     uv run python scripts/contamination_examples.py --semi 0.3 0.4 0.4 0.3 --semi 0.75 0.6 0.4 --image IMG.jpg --out OUT
 
+    # original droplet placement: X Y only a hint to the network (for comparison)
+    uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.3 --droplet-placement network --image IMG.jpg --out OUT
+
     # earlier behaviour: centre-crop to a square
     uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.5 --image IMG.jpg --out OUT --square
 
@@ -102,6 +111,13 @@ Notes:
 - The seed only changes the shapes (and how many separate droplets one spot
   splits into, distortion, ...). Position and size come from the spots. seed.json
   also records the spots, so it holds everything needed to rerun a result.
+- Exact droplet placement: the network is asked for a droplet in the centre, so a
+  droplet's shape no longer depends on X Y, only on SIZE and the seed. A droplet may
+  be put at the image edge (X or Y = 0 or 1); the part outside is cut off, and
+  ZoomIn/ZoomOut is still judged by its full size. If the network draws no droplet
+  pixel (small SIZE), it is called again, up to DROPLET_ATTEMPTS times; seed.json
+  records per spot the centroid reached, the shift and the number of attempts
+  (droplet_placements).
 - Semi-transparent soiling: result = image * (1 - a) + colour * a per pixel, with
   a = opacity * shape mask * Perlin texture. --semi-color sets the one colour,
   --semi-opacity scales a (a spot's 4th number overrides it), --semi-scale sets the
@@ -130,6 +146,7 @@ import torch
 
 from degradation_fw.core.paths import use_third_party
 from degradation_fw.core.weights import weight_path
+from degradation_fw.degradations.lens.placement import place_mask, shape_pixels
 
 # The vendored code imports its own modules by top-level name (from noise import pnoise2)
 use_third_party("camera_contamination_simulation", modules=["contamination_simulation", "noise"])
@@ -142,6 +159,7 @@ from contamination_simulation import (  # noqa: E402
 DROPLET_SIZE = 966  # size used in the original example (defisheyed WoodScape images)
 F_C = 380  # camera focal length in px used by the authors for WoodScape (see end of contamination_simulation.py)
 MASK_THRESHOLD = 0.5  # mask value from which a pixel counts as droplet (bounding box / ZoomIn-ZoomOut decision)
+DROPLET_ATTEMPTS = 20  # exact placement: network calls per spot until the shape has a droplet pixel
 GENERATORS = ("opaque", "semi", "droplet")
 
 # Default spots [x, y, size], used when an option is given without numbers (e.g. just
@@ -168,6 +186,38 @@ SEMI_COLOR = [194, 178, 128]  # default for --semi-color (sand; the original scr
 SEMI_OPACITY = 1.0  # default for --semi-opacity: 1 = original strength, 0 = invisible
 SEMI_SCALES = [10, 1000]  # default for --semi-scale: one result per noise scale
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
+class PlacedDropletGenerator(DropletGenerator):
+    """DropletGenerator whose network only draws the shape; the droplet is put exactly at (x, y)
+    (--droplet-placement exact, decision 0009).
+
+    simulate_droplet() gets its mask from generate_mask(); overriding that method is the only
+    change, so everything after it (splitting into droplets, ZoomIn/ZoomOut, refraction,
+    blending) is the original code. The network is always asked for a droplet in the centre
+    of the max(H, W) square, so the shape is complete; then the shape is moved so that the
+    centroid of its droplet pixels lies on (x, y) (degradation_fw/degradations/lens/placement.py).
+    Several separate pieces move together. If the network draws no droplet pixel, it is
+    called again (the random numbers continue, so the result stays reproducible), up to
+    DROPLET_ATTEMPTS times."""
+
+    def __init__(self, model_path: str, threshold: float = MASK_THRESHOLD, attempts: int = DROPLET_ATTEMPTS):
+        super().__init__(model_path=model_path)
+        self.threshold, self.attempts = threshold, attempts
+        self.last_placement: dict | None = None  # filled by every generate_mask call
+
+    def generate_mask(self, x, y, size, blur_kernel_size, blur_sigma, height=None, width=None, return_square=False):
+        side = max(height, width)
+        for attempt in range(1, self.attempts + 1):
+            shape = super().generate_mask(0.5, 0.5, size, blur_kernel_size, blur_sigma, side, side)
+            if shape_pixels(shape, self.threshold).any():
+                break
+        else:
+            raise RuntimeError(f"--droplet {x:g} {y:g} {size:g}: the network drew no droplet in "
+                               f"{self.attempts} attempts; use a larger SIZE")  # fmt: skip
+        mask, canvas, top, left, info = place_mask(shape, x, y, height, width, self.threshold)
+        self.last_placement = {"spot": [x, y, size], **info, "attempts": attempt}
+        return (mask, canvas, top, left) if return_square else mask
 
 
 def set_seed(seed: int) -> None:
@@ -295,6 +345,7 @@ def output_folders(images: list[Path], out: Path) -> list[Path]:
 
 def process_image(path: Path, out: Path, args: argparse.Namespace, generators: dict) -> int:
     """Returns the seed used for this image."""
+    placements = []  # exact droplet placement: one record per --droplet spot
     raw = read_rgb(path)  # read first, so an unreadable file leaves no empty output folder
     out.mkdir(parents=True, exist_ok=True)
     if args.square:
@@ -362,6 +413,7 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
     if args.droplet:
         droplet = generators["droplet"]
         cases = []
+        placements.clear()
 
         def apply_droplet(im, x, y, s):
             out_img, m = droplet.simulate_droplet(
@@ -370,6 +422,15 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
                 ib_gauss_kernel=201, blurr_roi_gauss_kernel=41, mood="black", mask_threshold=MASK_THRESHOLD,
             )  # fmt: skip
             cases.extend(d["case"] for d in droplet.last_droplets)
+            placed = getattr(droplet, "last_placement", None)
+            if placed is not None:  # exact placement
+                placements.append(placed)
+                if placed["attempts"] > 1:
+                    print(f"  droplet {x:g} {y:g} {s:g}: no droplet in the first network output, "
+                          f"took attempt {placed['attempts']}")  # fmt: skip
+                if placed["at_network_edge"]:
+                    print(f"  droplet {x:g} {y:g} {s:g}: the shape reaches the edge of the network's mask "
+                          f"and may be cut off there (SIZE large?)")  # fmt: skip
             return out_img, m
 
         set_seed(seed)
@@ -415,6 +476,10 @@ def process_image(path: Path, out: Path, args: argparse.Namespace, generators: d
         "opaque_gamma": args.opaque_gamma,
         # semi-transparent: colour, opacity (spots with a 4th number use their own), noise scales
         "semi_color": args.semi_color, "semi_opacity": args.semi_opacity, "semi_scales": args.semi_scale,
+        # droplets: "exact" = shape from the network, centroid exactly at the spot (decision 0009);
+        # "network" = the original behaviour, the network decides where the droplet lands
+        "droplet_placement": args.droplet_placement if args.droplet else None,
+        "droplet_placements": placements,
     }  # fmt: skip
     (out / "seed.json").write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     return seed
@@ -472,6 +537,11 @@ def main() -> None:
         "--square", action="store_true", help="Centre-crop to 960x960 / 966x966 as before, instead of using the original size"
     )
     parser.add_argument("--save-input", action="store_true", help="Also save a copy of the input image (input.png); off by default")
+    parser.add_argument(
+        "--droplet-placement", choices=("exact", "network"), default="exact",
+        help="exact (default): the network only draws the droplet's shape, its centroid is put exactly at X Y; "
+        "network: the original behaviour, X Y are only a hint to the network (lands 4-20 %% of the longer side away)",
+    )  # fmt: skip
     args = parser.parse_args()
 
     # Opaque colours. Giving a colour without --opaque means: opaque at its default spot.
@@ -569,7 +639,9 @@ def main() -> None:
     if args.semi:
         generators["semi"] = SemiContaminationGenerator(str(weight_path("contamination_semi")))
     if args.droplet:
-        generators["droplet"] = DropletGenerator(model_path=str(weight_path("contamination_droplet")))
+        model = str(weight_path("contamination_droplet"))
+        exact = args.droplet_placement == "exact"
+        generators["droplet"] = PlacedDropletGenerator(model) if exact else DropletGenerator(model_path=model)
 
     failed, seeds = [], {}
     for i, (path, out) in enumerate(zip(images, output_folders(images, args.out)), start=1):

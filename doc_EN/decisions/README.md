@@ -23,5 +23,6 @@ Everyday bug fixes and small refactorings need no record; the commit history is 
 | [0004](0004-exif-orientation.md) | Images are turned upright by EXIF orientation when read; RGB and depth of the fog come from the same pixels | Accepted | 2026-11-19 |
 | [0005](0005-output-name-collisions.md) | Taken output names get `_2`, `_3` instead of overwriting | Accepted | 2026-11-19 |
 | [0008](0008-fog-lidar-depth-scale.md) | Fog depth: with LiDAR, the point cloud corrects the scale of Depth Pro (`degfw fog --lidar`) | Accepted | 2026-11-24 |
+| [0009](0009-droplet-exact-placement.md) | Water drops are placed exactly where we specify (centroid aligned); the network only provides the shape; several pieces move together | Accepted | 2026-11-24 |
 
 0006 (choice of degradations) and 0007 (interface extension) are reserved in the [roadmap](../roadmap.md)'s open decisions and not written yet.

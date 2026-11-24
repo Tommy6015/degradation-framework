@@ -80,7 +80,7 @@ Labels on the arrows: «use» = calls / inherits from the layer below; «import�
   only its own degradation is marked unavailable (`degfw list` gives the reason); nothing else is affected.
 - The **entry layer** contains no code for specific degradations: `degfw run <name>` works for every degradation; a degradation that needs its own command registers it itself (e.g. `degfw fog`).
 - **Dataset readers** `datasets/`: turn a dataset's files and calibration into the framework's common form (e.g. `LidarView` in `core/lidar.py`). For now only TUMTraf point clouds and calibration, used by `degfw fog --lidar` ([decision 0008](decisions/0008-fog-lidar-depth-scale.md)); the dataset adapter interface of M6 will also go here.
-- Lens contamination can currently only be run through `scripts/contamination_examples.py`; it is not integrated into the framework yet.
+- Lens contamination can currently only be run through `scripts/contamination_examples.py`; it is not integrated into the framework yet. The exact placement of water drops ([decision 0009](decisions/0009-droplet-exact-placement.md)) is already in the framework (`degradations/lens/placement.py`), to be reused then.
 
 ### Dependencies of each module
 
@@ -101,7 +101,8 @@ Labels on the arrows: «use» = calls / inherits from the layer below; «import�
 | `degradations/__init__.py` | weather.fog, sensor.gaussian_noise | Importing registers them |
 | `degradations/weather/fog.py` | core.base, core.params, core.registry, core.io, core.paths, core.weights, core.lidar; when needed: Clear2Fog, datasets.tumtraf | |
 | `degradations/sensor/gaussian_noise.py` | core.base, core.params, core.registry | |
-| `scripts/contamination_examples.py` | core.paths, core.weights; camera_contamination_simulation | |
+| `degradations/lens/placement.py` | none | Exact placement of water drops, numpy only |
+| `scripts/contamination_examples.py` | core.paths, core.weights, degradations.lens.placement; camera_contamination_simulation | |
 
 To check: `grep -rnE "^\s*from (\.|degradation_fw)" degradation_fw scripts`
 

@@ -23,5 +23,6 @@
 | [0004](0004-exif-orientation.md) | 读图时按 EXIF 方向转正；雾的 RGB 和景深来自同一份像素 | 已采纳 | 2026-11-19 |
 | [0005](0005-output-name-collisions.md) | 同名输出加 `_2`、`_3`，不覆盖 | 已采纳 | 2026-11-19 |
 | [0008](0008-fog-lidar-depth-scale.md) | 雾的景深：有 LiDAR 时用点云校正 Depth Pro 的尺度（`degfw fog --lidar`） | 已采纳 | 2026-11-24 |
+| [0009](0009-droplet-exact-placement.md) | 水滴的位置由我们精确指定（质心对准），网络只负责形状；裂成几块时一起平移 | 已采纳 | 2026-11-24 |
 
 0006（退化的选择）和 0007（接口扩展）已在 [roadmap](../roadmap.md) 的"要决定的事"里预留编号，还没写。

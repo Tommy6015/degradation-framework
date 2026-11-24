@@ -80,7 +80,7 @@ flowchart TB
   只会让它自己的退化标为不可用（`degfw list` 写明原因），不影响其他部分。
 - **入口层**里没有具体退化的代码：`degfw run <名字>` 对所有退化通用；个别退化需要专门命令时自己注册（如 `degfw fog`）。
 - **数据集读取** `datasets/`：把某个数据集的文件和标定整理成框架通用的形式（如 `core/lidar.py` 的 `LidarView`）。现在只有 TUMTraf 的点云和标定，供 `degfw fog --lidar` 用（[决策 0008](decisions/0008-fog-lidar-depth-scale.md)）；M6 的数据集适配器接口也会放在这里。
-- 镜头污染目前只能通过 `scripts/contamination_examples.py` 运行，还没有接入框架。
+- 镜头污染目前只能通过 `scripts/contamination_examples.py` 运行，还没有接入框架。水滴的精确放置（[决策 0009](decisions/0009-droplet-exact-placement.md)）已经放在框架里（`degradations/lens/placement.py`），接入时复用。
 
 ### 各模块的依赖明细
 
@@ -101,7 +101,8 @@ flowchart TB
 | `degradations/__init__.py` | weather.fog、sensor.gaussian_noise | 导入即注册 |
 | `degradations/weather/fog.py` | core.base、core.params、core.registry、core.io、core.paths、core.weights、core.lidar；用到时：Clear2Fog、datasets.tumtraf | |
 | `degradations/sensor/gaussian_noise.py` | core.base、core.params、core.registry | |
-| `scripts/contamination_examples.py` | core.paths、core.weights；camera_contamination_simulation | |
+| `degradations/lens/placement.py` | 无 | 水滴的精确放置，只用 numpy |
+| `scripts/contamination_examples.py` | core.paths、core.weights、degradations.lens.placement；camera_contamination_simulation | |
 
 核对时用：`grep -rnE "^\s*from (\.|degradation_fw)" degradation_fw scripts`
 

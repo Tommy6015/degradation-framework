@@ -142,6 +142,11 @@ Caveats:
   - **Y:** vertical position, 0 = top edge, 1 = bottom edge;
   - **SIZE:** size relative to the longer image side; 0.15 is small, 0.5 already large;
   - **Range:** X and Y must be between 0 and 1, SIZE greater than 0 and at most 1. Out of range, the script reports what is wrong and generates no image.
+- **Position: exact for water drops, only a hint for the other two:**
+  - **Water drops:** the network only draws the shape; the drawn drop is then moved as a whole so that its centroid lies exactly on (X, Y).
+    If it splits into several pieces, they move together and keep their shape ([decision 0009](decisions/0009-droplet-exact-placement.md)).
+    Measured error at most 1 pixel; when the network decided the position, it was on average 4 % to 20 % of the longer side off.
+  - **Opaque and semi-transparent soiling:** X and Y are still only a hint to the network; the actual position deviates.
 - **Several spots:** repeat the option, e.g. `--droplet 0.2 0.3 0.2 --droplet 0.7 0.6 0.15`; all spots go onto the same result image.
   All three types can also be given in the same command.
 - **Only the types you give are run:**
@@ -154,12 +159,13 @@ Caveats:
   - at SIZE ≤ 0.1, some seeds produce no drop at all;
   - at SIZE ≥ 0.4, one spot splits into 2 to 4 drops; at 0.6 the whole image is covered.
   - Opaque and semi-transparent soiling use the same kind of network and show the same randomness.
-  - The plan is to change this so that the network only gives the shape, and position and size are set exactly by us (M4).
+  - The position of water drops is exact now (see the previous item), their size not yet; the next step is to set it exactly as well.
 - **Seeds:**
   - `--seed N` fixes the shapes, default 0; all images use the same seed, so they get the same shapes;
   - `--seed random` draws a seed for each image;
   - the seed used is always written to `seed.json`, so the result can be reproduced with `--seed N`;
   - the seed only changes the shapes (and how many drops a spot splits into, the distortion, …); position and size are set only by `X Y SIZE`.
+    A water drop's shape depends only on SIZE and the random numbers, no longer on its position.
 - **Other options:**
   - `--recursive`: also process the images in subfolders;
   - `--save-input`: also save a copy of the input image, `input.png`;
@@ -183,6 +189,9 @@ uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.3 --image $s
 
 # two drops on the same image
 uv run python scripts/contamination_examples.py --droplet 0.2 0.3 0.2 --droplet 0.7 0.6 0.15 --image $src --out "$out\Droplet_testing\$tag"
+
+# the original behaviour: the position only a hint to the network (for comparison)
+uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.3 --droplet-placement network --image $src --out "$out\Droplet_testing\$tag"
 ```
 
 Input at run time, variant 1: one input, drops separated by semicolons.
@@ -208,7 +217,15 @@ uv run python scripts/contamination_examples.py $drops --image $src --out "$out\
 ```
 
 - **Default spot:** just `--droplet` gives `0.3 0.4 0.5`. According to the measurements in 5.1, SIZE 0.5 tends to split into several drops; for a single drop, use SIZE 0.1 to 0.3.
+- **Exact placement:** the drop's centroid lies exactly on X Y.
+  - **At the edge:** X and Y may be 0 or 1; the drop is put at the image edge and the part outside is cut off. Zoom-in / zoom-out is still decided by the drop's full size.
+  - **Small SIZE retries:** if the network draws no drop at all (happens at SIZE ≤ 0.1), it is called again, up to 20 times, and the terminal says which attempt was used.
+    The random numbers simply continue, so the result stays reproducible. If all 20 attempts fail, an error is reported and this image is not generated.
+  - **Touching the edge of the network's canvas:** at large SIZE the shape may be cut off by the network's canvas; the terminal says so.
+  - **The original behaviour:** with `--droplet-placement network`, X Y are only a hint to the network and the results are pixel-identical to before the change, for comparison.
 - **Output:** `droplet.png` (the result) and `droplet_mask.png` (the area of all drops together).
+  In `seed.json`, `droplet_placement` records which placement was used (`exact` / `network`);
+  `droplet_placements` records for each drop the centroid reached (pixels), the shift, the number of network calls, and whether it touches the edge of the network's canvas.
 
 ### 5.3 Opaque soiling: `--opaque`
 
@@ -294,6 +311,7 @@ Three things to watch out for:
 | A degradation shows `UNAVAILABLE` in `degfw list` | The reason follows: for a missing Python package run `uv sync`; for missing weights run `uv run degfw weights --download` |
 | The contamination script says `no images found` | The image format is not supported (formats in 5.1), or the images are in subfolders and `--recursive` is missing |
 | The contamination script says something like `x and y must be in 0..1, size in (0, 1]` | A value is out of range; correct it as the message says. No image is generated in this case |
+| The contamination script says `the network drew no droplet in 20 attempts` | The water drop's SIZE is too small for the network; use a larger SIZE. This image is not generated, the others are processed as usual |
 | `degfw gui` says `GUI not installed` | Run `uv sync --extra gui` first |
 | Fog is very slow (about 20 seconds per image) | `--fp16` is missing, see section 4 |
 | With `--lidar`: `No TUMTraf (OpenLABEL) label files with LiDAR frames found` | The given folder (including subfolders) contains no TUMTraf label files. Check the path; usually give the dataset root |

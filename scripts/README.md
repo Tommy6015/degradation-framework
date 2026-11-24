@@ -43,3 +43,6 @@ uv run python scripts/contamination_examples.py --image IMG.jpg --out OUT
   `--semi-scale`（噪声尺度，默认 10 和 1000 各一张）；单块可写 `--semi X Y SIZE OPACITY` 自带强度。
   透明度在脚本里按比例混合实现，没有改 `contamination_simulation.py`。默认颜色改成了沙色，想得到原来的灰色结果用 `--semi-color 125 125 125`。
 - 移到 `scripts/`：第三方代码通过 `use_third_party()` 加载，模型按 `third_party/weights.yaml` 找，不再要求在第三方目录下运行。
+- 水滴精确放置（[决策 0009](../doc/decisions/0009-droplet-exact-placement.md)）：网络只负责形状（总在正中央生成），再把整团水滴平移，使质心正好落在 `--droplet X Y`，裂成几块时一起平移；没画出水滴时重试，最多 20 次。
+  用 `DropletGenerator` 的子类 `PlacedDropletGenerator` 实现，没有改 `third_party/`；平移的计算在 `degradation_fw/degradations/lens/placement.py`。
+  `--droplet-placement network` 回到原来的做法（结果和改动前逐像素一致）；`seed.json` 记下每块水滴的实际质心、平移量和网络调用次数。

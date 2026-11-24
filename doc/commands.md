@@ -142,6 +142,11 @@ uv run degfw fog -i "$src\a9_dataset_r02_s03\images\s110_camera_basler_south2_8m
   - **Y：** 垂直位置，0 是最上，1 是最下；
   - **SIZE：** 大小，按图像长边的比例算，0.15 偏小，0.5 已经很大；
   - **范围：** X、Y 要在 0 到 1 之间，SIZE 要大于 0、不超过 1。超出范围时脚本会报错，说明哪里错了，不会生成图。
+- **位置：水滴是精确的，另外两种只是参考：**
+  - **水滴：** 网络只负责画形状，画好后把整团水滴平移，使它的质心正好落在 (X, Y)。
+    裂成几块时几块一起平移，保持原来的形状（[决策 0009](decisions/0009-droplet-exact-placement.md)）。
+    实测偏差不超过 1 像素；以前由网络决定位置时，平均偏离长边的 4% 到 20%。
+  - **不透明和半透明污渍：** X、Y 仍只是交给网络的参考，实际位置会有偏差。
 - **多块污渍：** 同一个选项重复写，比如 `--droplet 0.2 0.3 0.2 --droplet 0.7 0.6 0.15`，所有污渍都画在同一张结果图上。
   三种污染也可以写在同一条命令里。
 - **给了哪种就只跑哪种：**
@@ -154,12 +159,13 @@ uv run degfw fog -i "$src\a9_dataset_r02_s03\images\s110_camera_basler_south2_8m
   - SIZE ≤ 0.1 时，有的种子一个水滴都不生成；
   - SIZE ≥ 0.4 时，一个位置会裂成 2 到 4 个水滴；到 0.6 直接盖满整张图。
   - 不透明污渍和半透明污渍用的也是这类网络，同样有这种随机性。
-  - 以后打算改成"网络只给形状，位置和大小由我们精确指定"（M4）。
+  - 水滴的位置已经精确了（见上一条），大小还没有；下一步打算同样由我们精确指定。
 - **种子：**
   - `--seed N` 固定形状，默认是 0，所有图都用同一个种子，所以形状相同；
   - `--seed random` 让每张图随机抽一个种子；
   - 实际用的种子都写进 `seed.json`，之后用 `--seed N` 就能复现；
   - 种子只改变形状（以及水滴裂成几块、变形等），位置和大小只由 `X Y SIZE` 决定。
+    水滴的形状只取决于 SIZE 和随机数，不再随位置变化。
 - **其他选项：**
   - `--recursive`：连子文件夹里的图一起处理；
   - `--save-input`：同时保存一份原图 `input.png`；
@@ -183,6 +189,9 @@ uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.3 --image $s
 
 # 两个水滴，画在同一张图上
 uv run python scripts/contamination_examples.py --droplet 0.2 0.3 0.2 --droplet 0.7 0.6 0.15 --image $src --out "$out\Droplet_testing\$tag"
+
+# 原来的做法：位置只作网络的参考（对比用）
+uv run python scripts/contamination_examples.py --droplet 0.3 0.4 0.3 --droplet-placement network --image $src --out "$out\Droplet_testing\$tag"
 ```
 
 运行时再输入，写法一：一次输入，多个水滴用分号隔开。
@@ -208,7 +217,15 @@ uv run python scripts/contamination_examples.py $drops --image $src --out "$out\
 ```
 
 - **默认位置：** 只写 `--droplet` 时是 `0.3 0.4 0.5`。按 5.1 的实测，SIZE 0.5 容易裂成几块；想要单个水滴，SIZE 用 0.1 到 0.3。
+- **精确放置：** 水滴的质心正好落在 X Y。
+  - **放在边缘：** X、Y 可以取 0 或 1，水滴放在图像边缘，超出的部分被裁掉；放大型 / 缩小型仍按水滴的完整大小判断。
+  - **SIZE 很小时会重试：** 网络一个水滴都没画出来时（SIZE ≤ 0.1 时会出现），会再调用一次网络，最多 20 次，终端会提示用了第几次。
+    随机数是接着往下取的，所以结果仍然可复现。20 次都没有就报错，这张图不生成。
+  - **碰到网络画布的边缘：** SIZE 很大时，形状可能被网络的画布截断，终端会提示。
+  - **原来的做法：** 加 `--droplet-placement network` 时，X Y 只作网络的参考，结果和改动前逐像素一致，可以用来对比。
 - **输出：** `droplet.png`（结果）和 `droplet_mask.png`（所有水滴合在一起的区域）。
+  `seed.json` 里的 `droplet_placement` 记下用的是哪种放置方式（`exact` / `network`）；
+  `droplet_placements` 里每块水滴记下实际质心（像素）、平移量、网络调用的次数，以及是否碰到网络画布的边缘。
 
 ### 5.3 不透明污渍：`--opaque`
 
@@ -294,6 +311,7 @@ uv run python scripts/contamination_examples.py $a --image $src --out "$out\Semi
 | `degfw list` 里某个退化显示 `UNAVAILABLE` | 后面写了原因：缺 Python 包就运行 `uv sync`；缺权重就运行 `uv run degfw weights --download` |
 | 污染脚本提示 `no images found` | 图片格式不支持（支持的格式见 5.1），或者图在子文件夹里、忘了加 `--recursive` |
 | 污染脚本提示 `x and y must be in 0..1, size in (0, 1]` 之类 | 数值超出范围，按提示改；这时不会生成任何图 |
+| 污染脚本提示 `the network drew no droplet in 20 attempts` | 水滴的 SIZE 太小，网络画不出来；把 SIZE 调大。这张图不生成，其他图照常处理 |
 | `degfw gui` 提示 `GUI not installed` | 先运行 `uv sync --extra gui` |
 | 雾跑得很慢（每张约 20 秒） | 没加 `--fp16`，见第 4 节 |
 | 加了 `--lidar`，提示 `No TUMTraf (OpenLABEL) label files with LiDAR frames found` | 给的文件夹里（包括子文件夹）没有 TUMTraf 的标注文件。检查路径，一般给数据集的根目录 |
