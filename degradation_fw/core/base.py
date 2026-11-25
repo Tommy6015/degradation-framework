@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from .context import Context
 from .params import Param
 
 
@@ -16,6 +17,7 @@ class Degradation:
     Subclasses set ``name`` / ``label`` / ``params`` and implement ``apply``.
 
     Image convention: float32, shape (H, W, 3), RGB, values in [0, 1].
+    Parameters may not be called image, rng or context (the arguments of ``apply``).
     """
 
     name: ClassVar[str] = ""          # unique id used in configs, e.g. "fog"
@@ -57,16 +59,20 @@ class Degradation:
                 raise ValueError(f"{self.name}.{key}: {e}") from None
         return resolved
 
-    def apply(self, image: np.ndarray, rng: np.random.Generator, **params: Any) -> np.ndarray:
+    def apply(self, image: np.ndarray, rng: np.random.Generator, context: Context,
+              **params: Any) -> np.ndarray:
         """Return the degraded image. Must not modify ``image`` in place.
 
         ``rng`` is the only source of randomness allowed, so results are
-        reproducible from the seed.
+        reproducible from the seed. ``context``: what is known about the image besides
+        its pixels (source file, the run's other images, ...; see core/context.py);
+        most degradations ignore it.
         """
         raise NotImplementedError
 
     def __call__(self, image: np.ndarray, rng: np.random.Generator | None = None,
-                 **params: Any) -> np.ndarray:
+                 context: Context | None = None, **params: Any) -> np.ndarray:
         rng = rng if rng is not None else np.random.default_rng()
-        out = self.apply(image, rng, **self.resolve_params(params))
+        context = context if context is not None else Context()
+        out = self.apply(image, rng, context, **self.resolve_params(params))
         return np.clip(out.astype(np.float32, copy=False), 0.0, 1.0)

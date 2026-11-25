@@ -17,7 +17,11 @@ Steps:
        use_third_party(repo, modules)              modules that import each other by name
        working_dir(folder)                         code that opens files relative to the cwd
   5. Fill in ``params``. In ``apply``: convert the image to what the code expects,
-     call it, convert the result back to float32 RGB HxWx3 in [0, 1].
+     call it, convert the result back to float32 RGB HxWx3 in [0, 1]. ``context``
+     (core/context.py) says where the image comes from: its source file, the run's
+     other input files, a dict kept for the whole run (for what is computed once per
+     run), and ``context.info`` for what to record in the image's .json. Most
+     degradations ignore it; weather/fog.py uses all of it.
   6. Register it: ``from .weather import rain`` in degradations/__init__.py. Then
      ``degfw run rain -i IN -o OUT -p key=value`` works and the generic tests check it;
      put its own tests in tests/degradations/test_rain.py.
@@ -67,7 +71,7 @@ class MyDegradation(Degradation):
         "mode": Choice(default="a", choices=("a", "b"), label="模式"),
     }
 
-    def apply(self, image: np.ndarray, rng: np.random.Generator, strength, count, mode):
+    def apply(self, image: np.ndarray, rng: np.random.Generator, context, strength, count, mode):
         model = _model()
         # --- convert to the third-party format (example: BGR uint8) ---
         bgr_u8 = (image[..., ::-1] * 255 + 0.5).astype(np.uint8)

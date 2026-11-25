@@ -42,16 +42,16 @@ $tag = "261123_01"                                   # ID of this test run; use 
 uv run degfw list
 uv run degfw weights                  # add --verify to check the SHA-256, --download to download missing weights
 
-# a single degradation (no configuration file)
-uv run degfw run gaussian_noise -i $src -o "$out\Noise\$tag" -p sigma=0.1
+# a single degradation (no configuration file); same result as degfw fog, output in the framework's format (see "Output" below)
 uv run degfw run fog -i $src -o "$out\Fog_run\$tag" -p visibility=50 fp16=true
+uv run degfw run fog -i $src -o "$out\Fog_run\$tag" -p visibility=50 fp16=true "lidar=$src\a9_dataset_r02_s03_Demo"   # with LiDAR
 
 # several degradations chained by a configuration file
 uv run degfw apply -c configs/example.yaml -i $src -o "$out\Apply\$tag"
 
 # tests
 uv run pytest -m "not slow"           # only those that need no model, under 1 second
-uv run pytest                         # all, about 2 minutes, needs the GPU and the models
+uv run pytest                         # all, about 4 minutes, needs the GPU and the models
 ```
 
 Caveats:
@@ -68,8 +68,11 @@ Caveats:
   - the output folder also gets a `pipeline.yaml`.
 - **Images with the same name:** images in one folder with the same stem (e.g. `a.jpg` and `a.png`) are written as `a.png` and `a_2.png`, so they do not overwrite each other.
 - **Portrait phone photos:** images are turned upright according to their EXIF orientation when read; the output images carry no orientation tag.
-- **`degfw run fog` and `degfw fog` treat images without sky differently:**
-  `degfw run fog` always uses the atmospheric light 0.8, `degfw fog` uses the average over the batch (see section 4).
+- **`degfw run fog` and `degfw fog` use the same fog code:** the same images at the same visibility give pixel-identical results,
+  including LiDAR and the batch-average atmospheric light for images without sky ([decision 0010](decisions/0010-context-one-fog-code.md)). They differ only in usage and output:
+  `degfw fog` takes several visibilities at once and writes `foggy_*.png` and `fog_run.json`; `degfw run fog` takes one visibility
+  and writes the same output as any other degradation, with the fog's record (where depth and atmospheric light came from) under `info` in each image's `.json`.
+  Also, `degfw run` goes into subfolders, `degfw fog` does not.
 - **Interface:** without gradio installed, `degfw gui` only prints `GUI not installed. Run: uv sync --extra gui`.
 
 ## 4. Fog: `degfw fog`
@@ -129,7 +132,7 @@ Caveats:
   - **The first line** `LiDAR: ... 5 of 5 input image(s) listed`: how many input images have a point cloud in the labels.
   - **One line per image** `LiDAR: depth x 8.18 from 4829 points, error 2.3%`: the factor applied to the depth, the number of points used, the error after correction.
     `LiDAR not used: reason -> Depth Pro only` means this image used Depth Pro only.
-  - **Only `degfw fog`** supports it, `degfw run fog` does not (waits for M3).
+  - **`degfw run fog` and configuration files support it too:** parameter `lidar`, e.g. `-p "lidar=$src\a9_dataset_r02_s03_Demo"`; a folder that does not exist is reported before any work.
   - **Time:** about 2 seconds per image (with `--fp16`). The full dataset has 1033 images per camera, so a full run takes over half an hour.
 - The method and parameters in detail: [degradations/fog.md](degradations/fog.md).
 

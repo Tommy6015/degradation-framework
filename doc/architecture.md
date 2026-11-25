@@ -1,6 +1,6 @@
 # 系统架构
 
-当前状态：2026-11-19。增删模块、改变依赖关系或调用顺序时，更新这里的图和表。
+当前状态：2026-11-25。增删模块、改变依赖关系或调用顺序时，更新这里的图和表。
 
 按三个视图描述，每个视图用对应的 UML 图：
 
@@ -28,6 +28,7 @@ flowchart TB
         pipeline["pipeline.py<br/>串联 · 批量"]
         registry["registry.py<br/>注册表"]
         base["base.py<br/>基类"]
+        context["context.py<br/>来源信息"]
         params["params.py<br/>参数类型"]
         io["io.py<br/>图片读写"]
         weights["weights.py<br/>权重清单"]
@@ -37,8 +38,7 @@ flowchart TB
 
     subgraph L3["适配器 degradations/"]
         fog["weather/<br/>fog.py"]
-        noise["sensor/<br/>gaussian_<br/>noise.py"]
-        lens["lens/<br/>lens_dirt.py<br/>（待实现）"]
+        lens["lens/<br/>placement.py"]
     end
 
     subgraph L5["数据集读取 datasets/"]
@@ -65,8 +65,8 @@ flowchart TB
     classDef layer4 fill:#F3E5F5,stroke:#8E24AA,color:#3A0F45
     classDef layer5 fill:#E0F2F1,stroke:#00897B,color:#00332E
     class cli,main,gui,scripts layer1
-    class pipeline,registry,base,params,io,weights,paths,lidar layer2
-    class fog,noise,lens layer3
+    class pipeline,registry,base,context,params,io,weights,paths,lidar layer2
+    class fog,lens layer3
     class c2f,ccs,wyaml layer4
     class tumtraf layer5
 ```
@@ -88,19 +88,18 @@ flowchart TB
 
 | 模块 | 依赖的项目内模块 | 备注 |
 |---|---|---|
-| `degradation_fw/__init__.py` | core.base、core.params、core.pipeline、core.registry | 对外接口 |
+| `degradation_fw/__init__.py` | core.base、core.context、core.params、core.pipeline、core.registry | 对外接口 |
 | `__main__.py` | cli | |
 | `cli.py` | core.registry、core.pipeline；用到时：core.weights、gui.app | |
 | `gui/app.py` | core.registry、core.io、core.params、core.pipeline | 需要 gradio |
-| `core/pipeline.py` | core.registry、core.io | |
+| `core/pipeline.py` | core.registry、core.io、core.context | |
 | `core/registry.py` | core.base；第一次查询时：degradations | |
-| `core/base.py` | core.params；用到时：core.weights | |
+| `core/base.py` | core.params、core.context；用到时：core.weights | |
 | `core/weights.py` | core.paths | 读 `third_party/weights.yaml` |
-| `core/io.py`、`core/params.py`、`core/paths.py`、`core/lidar.py` | 无 | |
+| `core/io.py`、`core/params.py`、`core/paths.py`、`core/lidar.py`、`core/context.py` | 无 | |
 | `datasets/tumtraf.py` | core.lidar | 读 TUMTraf 的 OpenLABEL 标注和点云文件名 |
-| `degradations/__init__.py` | weather.fog、sensor.gaussian_noise | 导入即注册 |
+| `degradations/__init__.py` | weather.fog | 导入即注册 |
 | `degradations/weather/fog.py` | core.base、core.params、core.registry、core.io、core.paths、core.weights、core.lidar；用到时：Clear2Fog、datasets.tumtraf | |
-| `degradations/sensor/gaussian_noise.py` | core.base、core.params、core.registry | |
 | `degradations/lens/placement.py` | 无 | 水滴的精确放置，只用 numpy |
 | `scripts/contamination_examples.py` | core.paths、core.weights、degradations.lens.placement；camera_contamination_simulation | |
 
@@ -122,18 +121,23 @@ classDiagram
         +requires_weights: tuple
         +unavailable_reason() str
         +resolve_params(overrides) dict
-        +apply(image, rng, params) ndarray
+        +apply(image, rng, context, params) ndarray
     }
     class Fog {
         «param» visibility: Int
         «param» fp16: Bool
-    }
-    class GaussianNoise {
-        «param» sigma: Float
-        «param» per_channel: Bool
+        «param» lidar: Folder
     }
     Degradation <|-- Fog
-    Degradation <|-- GaussianNoise
+
+    class Context {
+        <<dataclass>>
+        +source: Path
+        +batch: tuple
+        +shared: dict
+        +info: dict
+    }
+    Degradation ..> Context : apply()
 
     class Param {
         <<dataclass>>
@@ -145,13 +149,14 @@ classDiagram
     Param <|-- Int
     Param <|-- Choice
     Param <|-- Bool
+    Param <|-- Folder
     Degradation "1" o-- "*" Param : params
 
     class Pipeline {
         +steps: list
         +seed: int
         +from_file(path) Pipeline
-        +run(image, seed) tuple
+        +run(image, seed, source, batch) tuple
         +run_file(src, dst, seed) dict
         +run_folder(src_dir, dst_dir) list
     }
@@ -162,6 +167,7 @@ classDiagram
     }
     Pipeline "1" *-- "*" Step
     Pipeline ..> Degradation : 按名字取
+    Pipeline ..> Context : 每张图、每步一个
 
     class registry {
         <<module>>
@@ -173,14 +179,24 @@ classDiagram
     }
     registry o-- Degradation : 已注册
 
-    class Clear2Fog {
+    class FogRun {
+        +images: list
+        +lidar_index
+        +average
         +load(path) tuple
+        +depth(rgb, path) tuple
+        +light(rgb, depth) str
+        +fog(rgb, depth, light, visibility) ndarray
+    }
+    class Clear2Fog {
+        +focal_px(path) float
         +depth_from_array(rgb, f_px) ndarray
         +sky_light(rgb, depth)
         +set_average_light(paths)
         +simulate(rgb, depth, visibility) ndarray
     }
-    Fog ..> Clear2Fog : engine()
+    Fog ..> FogRun : 每次运行一个
+    FogRun ..> Clear2Fog : engine()
 
     class Weight {
         <<dataclass>>
@@ -195,9 +211,14 @@ classDiagram
 ```
 
 - `Degradation` 是抽象基类，子类实现 `apply()`，随机数只能用传入的 `rng`。
-  `Degradation.__call__(image, rng, **params)` 先补默认值、校验参数（`resolve_params`），再调用子类的 `apply`，最后把结果限制在 `[0, 1]`。
+  `Degradation.__call__(image, rng, context, **params)` 先补默认值、校验参数（`resolve_params`），再调用子类的 `apply`，最后把结果限制在 `[0, 1]`；
+  不给 `context` 时用一个空的，相当于内存里的一张图。
+- `Context` 是像素以外的来源信息（[决策 0010](decisions/0010-context-one-fog-code.md)）：这张图的文件 `source`、这次运行的全部输入 `batch`、
+  整次运行共用的 `shared`（每个步骤一个），以及退化写下的记录 `info`（记进 `.json`）。大多数退化不用它。
 - `Pipeline` 按步骤名从注册表取到退化（`registry.get`）；`registry` 保存所有已注册的子类。
-- `Clear2Fog` 是 `weather/fog.py` 里对第三方代码的封装（Depth Pro 模型 + `FogCamera`），由 `engine()` 只创建一次，供 `Fog` 和 `degfw fog` 共用。
+- `Clear2Fog` 是 `weather/fog.py` 里对第三方代码的封装（Depth Pro 模型 + `FogCamera`），由 `engine()` 只创建一次。
+- `FogRun` 是雾唯一的一份处理代码：一次运行一个，把焦距、景深、LiDAR 校正、大气光、加雾串起来，并保存这次运行共用的东西（LiDAR 索引、整批平均大气光）。
+  `Fog`（放在 `context.shared` 里）和 `degfw fog` 都用它，所以两者结果相同。
 
 ## 3. 运行时流程
 
@@ -226,11 +247,12 @@ sequenceDiagram
         loop 每个步骤（各用一个独立随机流）
             P->>R: get(步骤名)
             R-->>P: Degradation 实例
-            P->>D: deg(图, rng, 参数)
+            P->>P: Context(来源, 整批, 这一步的 shared)
+            P->>D: deg(图, rng, context, 参数)
             D-->>P: 退化后的图
         end
         P->>IO: save_image(结果 .png，同名加 _2)
-        P->>P: 写同名 .json（来源、种子、每步完整参数）
+        P->>P: 写同名 .json（来源、种子、每步的完整参数和 info）
     end
     P-->>CLI: 输出文件列表
     CLI-->>U: Done
@@ -238,6 +260,9 @@ sequenceDiagram
 
 - `degfw apply` 的区别只在开头：步骤和种子来自 YAML 配置（`Pipeline.from_file`），可以串联多个退化。
 - 输入是单个文件时走 `run_file`（没有外层循环，种子直接用配置的种子）；输入是文件夹时，输出文件夹里还会存一份这次用的 `pipeline.yaml`。
+- `shared` 在一次 `run_folder` 里只有一份（每个步骤一个），处理完这一批就丢掉；单个文件的运行有它自己的一份。
+- 雾（`Fog`）在这一步里做的和 3.2 里每张图做的完全一样：调用同一个 `FogRun` 的 `depth`、`light`、`fog`。
+  `FogRun` 在这次运行的第一张图时创建，放在 `context.shared` 里；焦距和找点云用的文件名来自 `context.source`，整批平均用 `context.batch`。
 
 ### 3.2 `degfw fog`（雾的专门命令）
 
@@ -246,38 +271,42 @@ sequenceDiagram
     autonumber
     actor UF as 用户
     participant F as fog.run_cli
+    participant FR as FogRun
     participant E as Clear2Fog 封装
     participant DP as Depth Pro
     participant FC as FogCamera
 
     UF->>F: degfw fog -i 输入 -o 输出 -v 能见度 [--lidar 文件夹]
     F->>F: collect_inputs、unique_stems（同名加 _2）
+    opt 给了 --lidar
+        F->>F: open_lidar(文件夹)：索引标注和点云
+    end
+    F->>FR: FogRun(全部输入, fp16, LiDAR 索引)
     F->>E: engine(fp16)
     Note over E,DP: 第一次调用时加载 Depth Pro（约 10 s）
-    opt 给了 --lidar
-        F->>F: TumTrafLidar(文件夹)：索引标注和点云
-    end
     loop 每张图片
-        F->>E: load(路径)
+        F->>FR: load(路径)
+        FR->>E: focal_px、depth_from_array
         E->>DP: infer(转正后的 RGB, EXIF 焦距)
         DP-->>E: 景深（米）
-        E-->>F: RGB、景深
-        opt 给了 --lidar，且找到这张图的点云
-            F->>F: lidar_scaled_depth：投影点云，景深 × 尺度
+        E-->>FR: 景深
+        opt 有 LiDAR 索引，且找到这张图的点云
+            FR->>FR: lidar_scaled_depth：投影点云，景深 × 尺度
         end
-        F->>E: sky_light(RGB, 景深)
-        E->>FC: estimate_atmospheric_light（只看 ≥ 1000 m 的像素）
-        FC-->>E: 大气光，没有天空时为 None
-        E-->>F: 大气光或 None
+        FR-->>F: RGB、景深、景深来源
+        F->>FR: light(RGB, 景深)
+        FR->>E: sky_light（只看 ≥ 1000 m 的像素）
         opt 没有天空，且还没算过平均值
-            F->>E: set_average_light(全部输入)
-            E-->>F: 平均大气光（都没有天空时为 0.8）
+            FR->>E: set_average_light(全部输入)
         end
+        FR-->>F: sky 或 average of input set
         loop 每个能见度
-            F->>E: simulate(RGB, 景深, 能见度)
+            F->>FR: fog(RGB, 景深, 大气光来源, 能见度)
+            FR->>E: simulate(RGB, 景深, 能见度)
             E->>FC: simulate（Koschmieder 公式）
             FC-->>E: 有雾图
-            E-->>F: 有雾图
+            E-->>FR: 有雾图
+            FR-->>F: 有雾图
             F->>F: 保存 foggy_名字_vis_能见度.png
         end
     end
@@ -291,6 +320,7 @@ sequenceDiagram
 一句话：**输入数据是图片；怎么处理由配置决定；模型权重这类运行需要的东西属于资源；
 输出是退化后的图片，以及每张图一份能复现结果的元数据**。
 入口有好几个，处理路径只有两条：通用的 `Pipeline` 路径，以及雾的专门命令 `degfw fog`。
+两条路径的输出格式不同；雾在两条路径上用的是同一份代码，同样的图结果相同（[决策 0010](decisions/0010-context-one-fog-code.md)）。
 
 ### 4.1 输入数据、配置、资源和输出位置
 
@@ -298,7 +328,7 @@ sequenceDiagram
 
 | 类别 | 是什么 | 每次运行会变吗 | 从哪里给 |
 |---|---|---|---|
-| **输入数据** | 图片：单个文件或文件夹（连子文件夹），支持 .png .jpg .jpeg .bmp .tif .tiff .webp。以后经数据集适配器读入各种数据集的序列和标注（M6，第一个示例是 TUMTraf A9）。可选：LiDAR 点云和标定，现在只有雾用（TUMTraf 的 OpenLABEL 标注） | 会 | `-i`；点云：`degfw fog --lidar` |
+| **输入数据** | 图片：单个文件或文件夹（连子文件夹），支持 .png .jpg .jpeg .bmp .tif .tiff .webp。以后经数据集适配器读入各种数据集的序列和标注（M6，第一个示例是 TUMTraf A9）。可选：LiDAR 点云和标定，现在只有雾用（TUMTraf 的 OpenLABEL 标注） | 会 | `-i`；点云：`degfw fog --lidar` 或雾的参数 `lidar` |
 | **配置** | 用哪些退化、各自的参数、种子 | 会 | 配置文件 `configs/*.yaml`（`degfw apply -c`）。`degfw run 名字 -p 参数=值 --seed N` 和 GUI 控件是同一类东西的简便写法 |
 | **资源** | 模型权重（`third_party/weights.yaml`）、代码版本和依赖（git 提交、`uv.lock`） | 不会，属于运行环境 | `uv sync`、`uv run degfw weights --download` |
 | **输出位置** | 结果写到哪里 | 会 | `-o` |
@@ -332,12 +362,23 @@ data/input/                     outputs/run1/
   "source": "data\\input\\cam1\\0001.jpg",
   "seed": 6542102234274946371,
   "steps": [
-    {"name": "fog", "params": {"visibility": 50, "fp16": false}}
+    {
+      "name": "fog",
+      "params": {"visibility": 50, "fp16": true, "lidar": ""},
+      "info": {
+        "atmospheric_light": "sky",
+        "depth_m": {"min": 4.43, "median": 12.9},
+        "depth": {"source": "depth_pro"}
+      }
+    }
   ]
 }
 ```
 
+- `info` 是退化自己写下的记录（[决策 0010](decisions/0010-context-one-fog-code.md)）。雾的 `info` 和 `fog_run.json` 里每张图的字段相同（见 4.3）；
+  用了整批平均大气光时另有 `average_light`（数值，以及其中有天空的图片数）。
 - 只重做一张图：`Pipeline.from_file("outputs/run1/pipeline.yaml").run_file(原图, 输出, seed=json 里的 seed)`。
+  没有天空的雾图，要得到同样的结果，还要传入同一批图：`batch=`（这一批的全部输入），因为它的大气光是整批平均的。
 - 输入是单个文件时，`-o` 就是输出文件名（如 `out.png`），旁边生成 `out.json`，不生成 `pipeline.yaml`。
 - GUI 的单张图模式：结果和元数据显示在界面上，不自动存文件。脚本里用 `Pipeline.run(图)`，直接返回（结果图, 元数据）。
 
@@ -355,7 +396,7 @@ outputs/fog/
 ```
 
 和 4.2 的区别：只读文件夹本层的 .png .jpg .jpeg（不进子文件夹）；所有结果放在同一个文件夹；每个能见度各出一张，景深只算一次；
-有 EXIF 焦距就用上；没有天空的图用整批图的平均大气光；加了 `--lidar` 时用点云校正景深的尺度。
+记录集中在一个 `fog_run.json` 里。焦距（有 EXIF 就用）、LiDAR 校正、没有天空时的整批平均大气光，和 4.2 里的雾完全一样。
 
 `fog_run.json` 的字段：
 
@@ -381,6 +422,7 @@ outputs/fog/
 |---|---|---|
 | 图像 | `float32`、`H x W x 3`、RGB、`[0, 1]`；读图时按 EXIF 转正，输出不带方向标记 | `core/io.py`、[决策 0004](decisions/0004-exif-orientation.md) |
 | 随机数 | 退化只能用传入的 `rng`；每个步骤一个独立随机流；批量时每张图的种子由（种子, 相对路径）算出 | `core/pipeline.py`、[决策 0003](decisions/0003-folder-seeds.md) |
-| 元数据 | 每张结果旁一个同名 `.json`：来源、种子、每步的完整参数；同名输出加 `_2` | `core/pipeline.py`、[决策 0005](decisions/0005-output-name-collisions.md) |
+| 元数据 | 每张结果旁一个同名 `.json`：来源、种子、每步的完整参数和 `info`；同名输出加 `_2` | `core/pipeline.py`、[决策 0005](decisions/0005-output-name-collisions.md) |
+| 来源信息 | 退化通过 `context` 拿到像素以外的信息：来源文件、整批输入、整次运行共用的 `shared`；写进 `context.info` 的内容记进 `.json` | `core/context.py`、[决策 0010](decisions/0010-context-one-fog-code.md) |
 | 注册 | `degradations/__init__.py` 导入即注册；适配器文件开头不加载重依赖 | `core/registry.py`、`degradations/_template.py` |
 | 第三方代码 | 只复制需要的文件到 `third_party/`，只在这里维护；加载、依赖组、权重清单的约定 | [决策 0001](decisions/0001-third-party-vendoring.md)、[决策 0002](decisions/0002-third-party-integration.md) |

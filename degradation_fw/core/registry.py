@@ -25,6 +25,9 @@ _REGISTRY: dict[str, type[Degradation]] = {}
 def register(cls: type[Degradation]) -> type[Degradation]:
     if not cls.name:
         raise ValueError(f"{cls.__name__} has no `name`")
+    reserved = {"image", "rng", "context"} & set(cls.params)  # the other arguments of apply()
+    if reserved:
+        raise ValueError(f"{cls.name}: parameter name(s) {sorted(reserved)} are reserved")
     if cls.name in _REGISTRY and _REGISTRY[cls.name] is not cls:
         raise ValueError(f"Degradation name {cls.name!r} already registered")
     _REGISTRY[cls.name] = cls

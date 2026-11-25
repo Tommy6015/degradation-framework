@@ -19,13 +19,18 @@ depth at the projected points: Depth Pro gives the structure, the LiDAR the scal
 Images without a point cloud (or with fewer than 50 points in view) keep Depth Pro's
 depth. Without --lidar nothing changes.
 
-Two ways to use it:
-  - its own command (registered below), like Clear2Fog's c2f.py (only input,
-    output, visibility):
-        uv run degfw fog -i INPUT -o OUTPUT -v 100
-  - as the registered degradation "fog" (params visibility, fp16), like any other:
-        uv run degfw run fog -i INPUT -o OUTPUT -p visibility=50
-    or as a step of a pipeline config (degfw apply, GUI).
+Two ways to use it, with the same fog code (FogRun) and so the same results for the
+same images (decision 0010):
+  - its own command (registered below), like Clear2Fog's c2f.py (input, output,
+    one or more visibilities):
+        uv run degfw fog -i INPUT -o OUTPUT -v 100 [--lidar FOLDER]
+  - as the registered degradation "fog" (params visibility, fp16, lidar), like any
+    other degradation:
+        uv run degfw run fog -i INPUT -o OUTPUT -p visibility=50 [lidar=FOLDER]
+    or as a step of a pipeline config (degfw apply, GUI). It gets the source file
+    and the run's other images from its Context. An image in memory (no file) has
+    no EXIF focal length, no LiDAR frame and no other images: Depth Pro alone, and
+    0.8 as the light if it has no sky.
 
 Differences to running c2f.py. For images without an EXIF orientation tag none of
 them changes the result (float32: pixel-identical):
@@ -52,6 +57,7 @@ import json
 import random
 import tempfile
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -59,7 +65,7 @@ import numpy as np
 from degradation_fw.core.base import Degradation
 from degradation_fw.core.io import load_rgb_u8, to_uint8, unique_stems
 from degradation_fw.core.lidar import MIN_POINTS, fit_depth_scale, project_points, read_pcd_xyz
-from degradation_fw.core.params import Bool, Int
+from degradation_fw.core.params import Bool, Folder, Int
 from degradation_fw.core.paths import import_third_party_package, third_party_dir, working_dir
 from degradation_fw.core.registry import register, register_command
 from degradation_fw.core.weights import missing_weights
@@ -115,19 +121,12 @@ class Clear2Fog:
         print(f"Clear2Fog: Depth Pro loaded on {self.depth.device} ({'float16' if fp16 else 'float32'}) "
               f"in {time.time() - t:.1f} s")
 
-    # ---- image + depth -----------------------------------------------------------
-    def load(self, path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-        """RGB (uint8, upright) and metric depth of an image file, both from the same
-        pixels, so they always match. The depth uses the EXIF focal length if the file
-        has one, as in c2f.py.
-
-        c2f.py reads the RGB without and Depth Pro reads the file with the EXIF
-        rotation, so a photo with an orientation tag failed there (90°: shapes differ)
-        or got an upside-down depth map (180°). Without a tag the result is the same.
-        """
-        rgb = load_rgb_u8(path)
-        _, _, f_px = self._load_rgb(path)  # Depth Pro's own loader, used only for the EXIF focal length
-        return rgb, self.depth_from_array(rgb, f_px)
+    # ---- depth (FogRun puts the steps together) -------------------------------------
+    def focal_px(self, path: str | Path) -> float | None:
+        """Focal length in pixels from the file's EXIF data, as c2f.py uses it; None if
+        the file has none (Depth Pro then estimates it)."""
+        _, _, f_px = self._load_rgb(path)  # Depth Pro's own loader, used only for this
+        return f_px
 
     def depth_from_array(self, rgb_u8: np.ndarray, f_px: float | None = None) -> np.ndarray:
         """Same as DepthGenerator.run, for an image in memory. f_px: focal length in
@@ -175,9 +174,25 @@ def engine(fp16: bool = False) -> Clear2Fog:
     Asking for the other precision replaces it (only one model in GPU memory)."""
     global _ENGINE
     if _ENGINE is None or _ENGINE.fp16 != fp16:
-        _ENGINE = None  # free the old model first
+        if _ENGINE is not None:
+            _release_engine()
         _ENGINE = Clear2Fog(fp16=fp16)
     return _ENGINE
+
+
+def _release_engine() -> None:
+    """Free the loaded model and give its GPU memory back. Left in PyTorch's cache, it
+    fragments the GPU memory, and the next float32 model (which needs ~8 GB) spills even
+    more into system memory: much slower."""
+    import gc
+
+    import torch
+
+    global _ENGINE
+    _ENGINE = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 @register
@@ -193,15 +208,24 @@ class Fog(Degradation):
                           help="Meteorological optical range in metres; lower = denser fog"),
         "fp16": Bool(default=False, label="半精度 fp16 (快约 20 倍，结果略有差异)",
                      help="Run Depth Pro in float16: much faster on GPU, depth differs by ~0.1 %"),
+        "lidar": Folder(label="LiDAR 文件夹 (可选)",
+                        help="Correct the depth scale with LiDAR: folder with TUMTraf (A9) OpenLABEL label "
+                             "files and point clouds, searched recursively (as degfw fog --lidar)"),
     }
 
-    def apply(self, image, rng, visibility, fp16):
-        # Deterministic: no randomness involved, rng is not used.
-        # A single image has no input set to average over, so an image without sky
-        # uses Clear2Fog's fallback light (0.8). The `degfw fog` command averages.
-        c2f = engine(fp16)
+    def apply(self, image, rng, context, visibility, fp16, lidar):
+        # Deterministic: no randomness involved, rng is not used. The same steps as
+        # degfw fog (FogRun); one FogRun per run, kept in context.shared.
+        run = context.shared.get("fog_run")
+        if run is None:  # first image of this run
+            run = context.shared["fog_run"] = FogRun(context.batch, fp16, open_lidar(lidar) if lidar else None)
         rgb = to_uint8(image)
-        foggy = c2f.simulate(rgb, c2f.depth_from_array(rgb), visibility)
+        depth, depth_record = run.depth(rgb, context.source)
+        light = run.light(rgb, depth)
+        foggy = run.fog(rgb, depth, light, visibility)
+        context.info.update(run.record(depth, depth_record, light))
+        if light != "sky":
+            context.info["average_light"] = run.average_record()
         return foggy.astype(np.float32) / 255.0
 
 
@@ -259,6 +283,92 @@ def lidar_scaled_depth(depth: np.ndarray, views) -> tuple[np.ndarray, dict]:
     return (depth * fit.scale).astype(depth.dtype), record
 
 
+def open_lidar(folder: str | Path):
+    """Index of the TUMTraf label files and point clouds under folder (decision 0008).
+    FileNotFoundError if the folder is missing or has no label file with a LiDAR frame."""
+    from degradation_fw.datasets.tumtraf import TumTrafLidar
+
+    index = TumTrafLidar(folder)
+    if not index.images:
+        raise FileNotFoundError(f"No TUMTraf (OpenLABEL) label files with LiDAR frames found under {folder}")
+    return index
+
+
+class FogRun:
+    """One fog run over a set of input images: the steps every image goes through, and
+    what the images of the run share. degfw fog (run_cli) and the registered degradation
+    both use it, so they give the same results for the same images (decision 0010).
+
+    images       the run's input files; the average atmospheric light for images
+                 without sky is computed from them (up to 100), when first needed
+    fp16         Depth Pro precision (the shared engine() of that precision is used)
+    lidar_index  open_lidar(folder) to scale the depth with LiDAR (decision 0008), or None
+
+    Per image: depth() (or load() for a file), light(), then fog() once per visibility.
+    """
+
+    def __init__(self, images: Sequence[str | Path], fp16: bool = False, lidar_index=None):
+        self.images = [Path(p) for p in images]
+        self.fp16 = fp16
+        self.lidar_index = lidar_index
+        self.average: tuple[np.ndarray, int] | None = None  # (light, images with sky), once computed
+
+    @property
+    def c2f(self) -> Clear2Fog:
+        return engine(self.fp16)
+
+    def depth(self, rgb_u8: np.ndarray, path: Path | None = None) -> tuple[np.ndarray, dict]:
+        """Metric depth of rgb_u8, the upright pixels of the file `path` (None: an image in
+        memory): Depth Pro with the file's EXIF focal length, scaled with LiDAR if there is
+        a LiDAR frame for the image. Returns (depth, record of where it came from)."""
+        c2f = self.c2f
+        depth = c2f.depth_from_array(rgb_u8, c2f.focal_px(path) if path is not None else None)
+        if self.lidar_index is None:
+            return depth, {"source": "depth_pro"}
+        if path is None:
+            return depth, {"source": "depth_pro",
+                           "lidar_not_used": "image in memory: no file name to find its LiDAR frame by"}
+        return lidar_scaled_depth(depth, self.lidar_index.views_for(Path(path).name))
+
+    def load(self, path: Path) -> tuple[np.ndarray, np.ndarray, dict]:
+        """RGB (uint8, upright), depth and depth record of an image file. RGB and depth
+        come from the same pixels, so they always match: c2f.py reads the RGB without and
+        Depth Pro reads the file with the EXIF rotation, so a photo with an orientation tag
+        failed there (90°: shapes differ) or got an upside-down depth map (180°). Without
+        a tag the result is the same (decision 0004)."""
+        rgb = load_rgb_u8(path)
+        return (rgb, *self.depth(rgb, path))
+
+    def light(self, rgb_u8: np.ndarray, depth: np.ndarray) -> str:
+        """Where the image's atmospheric light comes from: "sky" (from its own sky), or
+        "average of input set" (computed now from the run's images, if not done yet; 0.8
+        if none of them has sky)."""
+        if self.c2f.sky_light(rgb_u8, depth) is not None:
+            return "sky"
+        if self.average is None:
+            light, n_sky = self.c2f.set_average_light(self.images, load=lambda p: self.load(p)[:2])
+            self.average = (light.copy(), n_sky)
+        return "average of input set"
+
+    def fog(self, rgb_u8: np.ndarray, depth: np.ndarray, light: str, visibility: float) -> np.ndarray:
+        """Fogged uint8 RGB. light: what light() said for this image."""
+        c2f = self.c2f
+        if light != "sky":  # this run's average, whatever another run left in the shared engine
+            c2f.fog.avg_atmospheric_light = self.average[0].copy()
+        return c2f.simulate(rgb_u8, depth, visibility)
+
+    @staticmethod
+    def record(depth: np.ndarray, depth_record: dict, light: str) -> dict:
+        """What is recorded per image: where the light and the depth came from."""
+        return {"atmospheric_light": light,
+                "depth_m": {"min": round(float(depth.min()), 2), "median": round(float(np.median(depth)), 2)},
+                "depth": depth_record}
+
+    def average_record(self) -> dict:
+        light, n_sky = self.average
+        return {"value": [round(float(x), 4) for x in light], "images_with_sky": n_sky}
+
+
 def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bool = False,
             lidar: Path | None = None) -> int:
     """Fog every input image at every visibility. Output names as in c2f.py:
@@ -280,14 +390,10 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
         raise SystemExit(f"Visibility must be > 0 m, got {bad}")
     lidar_index = None
     if lidar is not None:
-        from degradation_fw.datasets.tumtraf import TumTrafLidar
-
         try:
-            lidar_index = TumTrafLidar(lidar)
+            lidar_index = open_lidar(lidar)
         except FileNotFoundError as e:
             raise SystemExit(str(e)) from None
-        if not lidar_index.images:
-            raise SystemExit(f"No TUMTraf (OpenLABEL) label files with LiDAR frames found under {lidar}")
         listed = sum(1 for p in images if lidar_index.views_for(p.name))
         print(f"LiDAR: {lidar_index.label_files} label file(s), {len(lidar_index.point_clouds)} point cloud(s) "
               f"under {lidar}; {listed} of {len(images)} input image(s) listed")
@@ -295,15 +401,8 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"{len(images)} image(s), visibility: {', '.join(f'{v} m' for v in visibilities)}")
 
-    def load(path):
-        """RGB, depth (scaled with LiDAR if available) and the depth record."""
-        rgb, depth = c2f.load(path)
-        if lidar_index is None:
-            return rgb, depth, {"source": "depth_pro"}
-        return (rgb, *lidar_scaled_depth(depth, lidar_index.views_for(path.name)))
-
-    c2f = engine(fp16)
-    average_done = False
+    run = FogRun(images, fp16, lidar_index)
+    engine(fp16)  # load Depth Pro before the first image
     record = {"method": "Clear2Fog", "visibility_m": visibilities,
               "depth_pro_precision": "float16" if fp16 else "float32",
               "lidar": str(lidar) if lidar is not None else None, "images": {}}
@@ -311,26 +410,20 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
     for i, (path, name) in enumerate(zip(images, unique_stems(images)), start=1):
         t = time.time()
         try:
-            rgb, depth, depth_record = load(path)
-            light = c2f.sky_light(rgb, depth)
-            if light is None and not average_done:
-                avg, n_sky = c2f.set_average_light(images, load=lambda p: load(p)[:2])
-                average_done = True
-                record["average_light"] = {"value": [round(float(x), 4) for x in avg], "images_with_sky": n_sky}
+            rgb, depth, depth_record = run.load(path)
+            first_average = run.average is None
+            light = run.light(rgb, depth)
+            if light != "sky" and first_average:
+                record["average_light"] = run.average_record()
                 print(f"  (no sky in {path.name}: average atmospheric light over the input set = "
-                      f"{np.round(avg, 3).tolist()}, from {n_sky} image(s) with sky)")
+                      f"{np.round(run.average[0], 3).tolist()}, from {run.average[1]} image(s) with sky)")
             outputs = []
             for v in visibilities:
-                foggy = c2f.simulate(rgb, depth, v)
+                foggy = run.fog(rgb, depth, light, v)
                 outputs.append(f"foggy_{name}_vis_{v}.png")
                 Image.fromarray(foggy).save(out_dir / outputs[-1])
-            record["images"][name] = {
-                "source": str(path),
-                "outputs": outputs,
-                "atmospheric_light": "sky" if light is not None else "average of input set",
-                "depth_m": {"min": round(float(depth.min()), 2), "median": round(float(np.median(depth)), 2)},
-                "depth": depth_record,
-            }
+            record["images"][name] = {"source": str(path), "outputs": outputs,
+                                      **run.record(depth, depth_record, light)}
             if lidar_index is None:
                 lidar_note = ""
             elif "lidar_scale" in depth_record:
@@ -339,7 +432,7 @@ def run_cli(inputs: list[Path], out_dir: Path, visibilities: list[int], fp16: bo
             else:
                 lidar_note = f"  (LiDAR not used: {depth_record['lidar_not_used']} -> Depth Pro only)"
             print(f"[{i}/{len(images)}] {path.name}: {time.time() - t:.1f} s" + lidar_note
-                  + ("" if light is not None else "  (no sky -> average light)")
+                  + ("" if light == "sky" else "  (no sky -> average light)")
                   + ("" if name == path.stem else f"  (name already taken: saved as foggy_{name}_...)"))
         except Exception as e:  # keep going, like c2f.py
             failed += 1

@@ -55,4 +55,6 @@
   要不要另找办法校正尺度（例如有相机标定时，用相机高度和地平面算出路面的距离），在定强度等级（F4）时一起决定。
 - **只有 `degfw fog` 能用：** `degfw run fog`、`apply` 和 GUI 暂时用不上 LiDAR，因为退化接口只拿到像素，拿不到图片的来源；
   要等 M3 的接口扩展（来源信息）。
+  **2026-11-25 更新：** 已解决。退化现在能拿到来源信息，雾的参数 `lidar` 在 `degfw run fog`、配置文件和 GUI 里都能用，
+  和 `degfw fog --lidar` 结果相同（[决策 0010](0010-context-one-fog-code.md)）。
 - **支持范围：** 只支持 TUMTraf 的 OpenLABEL 标注，以及 ascii 和 binary 两种 PCD；不需要新的依赖。

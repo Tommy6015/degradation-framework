@@ -24,5 +24,6 @@
 | [0005](0005-output-name-collisions.md) | 同名输出加 `_2`、`_3`，不覆盖 | 已采纳 | 2026-11-19 |
 | [0008](0008-fog-lidar-depth-scale.md) | 雾的景深：有 LiDAR 时用点云校正 Depth Pro 的尺度（`degfw fog --lidar`） | 已采纳 | 2026-11-24 |
 | [0009](0009-droplet-exact-placement.md) | 水滴的位置由我们精确指定（质心对准），网络只负责形状；裂成几块时一起平移 | 已采纳 | 2026-11-24 |
+| [0010](0010-context-one-fog-code.md) | 退化能拿到像素以外的来源信息（`Context`）；雾只有一份处理代码，`degfw fog` 和 `degfw run fog` 结果相同 | 已采纳 | 2026-11-25 |
 
 0006（退化的选择）和 0007（接口扩展）已在 [roadmap](../roadmap.md) 的"要决定的事"里预留编号，还没写。

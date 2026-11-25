@@ -4,10 +4,12 @@ A pipeline config looks like (YAML / JSON / dict)::
 
     seed: 0
     steps:
-      - name: gaussian_noise
-        params: {sigma: 0.05}
       - name: fog
-        params: {visibility: 50}
+        params: {visibility: 50, fp16: true}
+
+Every step gets the image and a Context (core/context.py): the source file, all input
+files of the run, a dict shared by all images of the run, and an info dict whose
+content is recorded in the image's .json (decision 0010).
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import numpy as np
 import yaml
 
 from . import registry
+from .context import Context
 from .io import list_images, load_image, save_image, unique_stems
 
 
@@ -71,25 +74,41 @@ class Pipeline:
                               encoding="utf-8")
 
     # ---- running ------------------------------------------------------
-    def run(self, image: np.ndarray, seed: int | None = None) -> tuple[np.ndarray, dict[str, Any]]:
+    def run(self, image: np.ndarray, seed: int | None = None, source: Path | None = None,
+            batch: tuple[Path, ...] = (), shared: dict[int, dict] | None = None
+            ) -> tuple[np.ndarray, dict[str, Any]]:
         """Apply all steps. Returns (image, metadata) where metadata records
-        the fully resolved params and the seed, enough to reproduce the result."""
+        the fully resolved params and the seed, enough to reproduce the result, and per
+        step what the degradation recorded in its context ("info", if anything).
+
+        source, batch: the image's file and all input files of the run, passed on in
+        each step's Context; leave them out for an image in memory. shared: the run's
+        state, {step index: dict}; run_folder passes the same one for all images, so
+        what a step computes once per run is reused (None = a new, empty one)."""
         if seed is None:
             seed = self.seed if self.seed is not None else int(np.random.SeedSequence().entropy % 2**32)
         # One independent child stream per step: changing one step's params
         # does not change the randomness of the others.
         children = np.random.SeedSequence(seed).spawn(len(self.steps))
+        shared = {} if shared is None else shared
+        batch = tuple(Path(p) for p in batch)
         out = image
         applied = []
-        for step, ss in zip(self.steps, children):
+        for i, (step, ss) in enumerate(zip(self.steps, children)):
             deg = registry.get(step.name)
             params = deg.resolve_params(step.params)
-            out = deg(out, np.random.default_rng(ss), **params)
-            applied.append({"name": step.name, "params": params})
+            context = Context(Path(source) if source is not None else None, batch, shared.setdefault(i, {}))
+            out = deg(out, np.random.default_rng(ss), context, **params)
+            applied.append({"name": step.name, "params": params, **({"info": context.info} if context.info else {})})
         return out, {"seed": seed, "steps": applied}
 
-    def run_file(self, src: str | Path, dst: str | Path, seed: int | None = None) -> dict[str, Any]:
-        out, meta = self.run(load_image(src), seed=seed)
+    def run_file(self, src: str | Path, dst: str | Path, seed: int | None = None,
+                 batch: tuple[Path, ...] | None = None, shared: dict[int, dict] | None = None) -> dict[str, Any]:
+        """One image file -> dst (.png) and dst's .json. batch: all input files of the
+        run (default: just src); shared: the run's state (see run)."""
+        src = Path(src)
+        out, meta = self.run(load_image(src), seed=seed, source=src,
+                             batch=(src,) if batch is None else batch, shared=shared)
         dst = Path(dst)
         save_image(out, dst)
         meta = {"source": str(src), **meta}
@@ -117,9 +136,10 @@ class Pipeline:
             for i, stem in zip(idx, unique_stems([rels[i] for i in idx])):
                 dsts[i] = dst_dir / rels[i].parent / f"{stem}.png"
         outputs = []
+        shared: dict[int, dict] = {}  # lasts for this run: one dict per step
         for i, (f, rel, dst) in enumerate(zip(files, rels, dsts)):
             seed = None if self.seed is None else image_seed(self.seed, rel)
-            self.run_file(f, dst, seed=seed)
+            self.run_file(f, dst, seed=seed, batch=tuple(files), shared=shared)
             outputs.append(dst)
             if progress:
                 progress(i + 1, len(files), f)

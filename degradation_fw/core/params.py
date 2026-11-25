@@ -1,13 +1,14 @@
 """Parameter specifications.
 
 Each degradation declares its parameters with these classes. The GUI reads them
-to build sliders / dropdowns / checkboxes automatically, and the pipeline uses
-them to validate and fill in defaults.
+to build sliders / dropdowns / checkboxes / text fields automatically, and the
+pipeline uses them to validate and fill in defaults.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -67,3 +68,17 @@ class Bool(Param):
 
     def validate(self, value: Any) -> bool:
         return bool(value)
+
+
+@dataclass(frozen=True)
+class Folder(Param):
+    """A folder on disk, as a string; "" (or None) = not given. A given folder must
+    exist, so a wrong path stops the run before any work."""
+
+    default: str = ""
+
+    def validate(self, value: Any) -> str:
+        v = "" if value is None else str(value).strip()
+        if v and not Path(v).is_dir():
+            raise ValueError(f"folder not found: {v}")
+        return v

@@ -42,16 +42,16 @@ $tag = "261123_01"                                   # 这次试验的编号，�
 uv run degfw list
 uv run degfw weights                  # 加 --verify 校验 SHA-256，加 --download 下载缺的权重
 
-# 单个退化（不用配置文件）
-uv run degfw run gaussian_noise -i $src -o "$out\Noise\$tag" -p sigma=0.1
+# 单个退化（不用配置文件）；结果和 degfw fog 相同，输出按框架的格式（见下面的"输出"）
 uv run degfw run fog -i $src -o "$out\Fog_run\$tag" -p visibility=50 fp16=true
+uv run degfw run fog -i $src -o "$out\Fog_run\$tag" -p visibility=50 fp16=true "lidar=$src\a9_dataset_r02_s03_Demo"   # 加 LiDAR
 
 # 按配置文件串联多个退化
 uv run degfw apply -c configs/example.yaml -i $src -o "$out\Apply\$tag"
 
 # 测试
 uv run pytest -m "not slow"           # 只跑不需要模型的，不到 1 秒
-uv run pytest                         # 全部，约 2 分钟，需要 GPU 和模型
+uv run pytest                         # 全部，约 4 分钟，需要 GPU 和模型
 ```
 
 注意：
@@ -68,8 +68,11 @@ uv run pytest                         # 全部，约 2 分钟，需要 GPU 和�
   - 输出文件夹里另有一份 `pipeline.yaml`。
 - **同名图片：** 同一个文件夹里主名相同的图片（如 `a.jpg` 和 `a.png`），输出为 `a.png` 和 `a_2.png`，不会互相覆盖。
 - **手机竖拍的照片：** 读图时按 EXIF 方向转正，输出的图片不带方向标记。
-- **`degfw run fog` 和 `degfw fog` 处理没有天空的图的方式不同：**
-  `degfw run fog` 一律用大气光 0.8，`degfw fog` 用整批的平均值（见第 4 节）。
+- **`degfw run fog` 和 `degfw fog` 用的是同一份雾的代码：** 同样的图、同样的能见度，结果逐像素相同，
+  LiDAR、没有天空时的整批平均大气光也都一样（[决策 0010](decisions/0010-context-one-fog-code.md)）。区别只在用法和输出：
+  `degfw fog` 一次可以给多个能见度，输出 `foggy_*.png` 和 `fog_run.json`；`degfw run fog` 一次一个能见度，
+  输出和其他退化一样，雾的记录（景深、大气光从哪来）在每张图 `.json` 的 `info` 里。
+  另外 `degfw run` 会进子文件夹，`degfw fog` 不进。
 - **界面：** 没装 gradio 时，`degfw gui` 只会提示 `GUI not installed. Run: uv sync --extra gui`。
 
 ## 4. 雾：`degfw fog`
@@ -129,7 +132,7 @@ uv run degfw fog -i "$src\a9_dataset_r02_s03\images\s110_camera_basler_south2_8m
   - **开头一行** `LiDAR: ... 5 of 5 input image(s) listed`：输入的图里有几张在标注里找到了对应的点云。
   - **每张图一行** `LiDAR: depth x 8.18 from 4829 points, error 2.3%`：景深乘了多少、用了多少个点、校正后的误差。
     显示 `LiDAR not used: 原因 -> Depth Pro only` 时，这张图只用了 Depth Pro。
-  - **只有 `degfw fog` 能用**，`degfw run fog` 不能（要等 M3）。
+  - **`degfw run fog`、配置文件也能用：** 参数 `lidar`，如 `-p "lidar=$src\a9_dataset_r02_s03_Demo"`；文件夹不存在时，开始处理前就报错。
   - **时间：** 每张图约 2 秒（加 `--fp16`）。完整数据集一台相机有 1033 张，全部跑完要半个多小时。
 - 方法和参数的细节见 [degradations/fog.md](degradations/fog.md)。
 

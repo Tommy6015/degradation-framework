@@ -12,7 +12,7 @@ import numpy as np
 
 from ..core import registry
 from ..core.io import to_float, to_uint8
-from ..core.params import Bool, Choice, Float, Int, Param
+from ..core.params import Bool, Choice, Float, Folder, Int, Param
 from ..core.pipeline import Pipeline, Step
 
 
@@ -29,6 +29,8 @@ def _make_control(key: str, spec: Param):
                            info=spec.help or None)
     if isinstance(spec, Bool):
         return gr.Checkbox(value=spec.default, label=label, info=spec.help or None)
+    if isinstance(spec, Folder):
+        return gr.Textbox(value=spec.default, label=label, info=spec.help or None)
     raise TypeError(f"No GUI control for {type(spec).__name__}")
 
 

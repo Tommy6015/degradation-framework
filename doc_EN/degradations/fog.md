@@ -18,7 +18,8 @@ uv run degfw fog -i image_or_folder -o output_folder -v 100
 - Images with an EXIF orientation tag, such as portrait photos from phones, are turned upright before the fog is added, and the output is upright (the original `c2f.py` fails on such photos or gets an upside-down depth).
 - Before the first use, download the Depth Pro weights (about 1.9 GB, not in git): `uv run degfw weights --download`.
 - Like any other degradation, it can also be used as `uv run degfw run fog -i input -o output -p visibility=50`,
-  or in a YAML pipeline: `- name: fog` + `params: {visibility: 50, fp16: true}`.
+  or in a configuration file: `- name: fog` + `params: {visibility: 50, fp16: true}`. Both ways use the same fog code:
+  the same images at the same visibility give pixel-identical results ([decision 0010](../decisions/0010-context-one-fog-code.md)); the differences are in the last section.
 
 ## Correcting the depth with LiDAR (`--lidar`)
 
@@ -39,7 +40,8 @@ uv run degfw fog -i a9_dataset_r02_s03/images/s110_camera_basler_south2_8mm -o o
   a label's `image_file_names` lists the images taken together with its point cloud frame. If several LiDARs belong to an image, the points of all of them are used.
 - **Fallback:** if no point cloud is found for an image, fewer than 50 points are in view, or the calibration is for a different image size, the image uses Depth Pro only, and the terminal gives the reason.
 - **Record:** for each image, `depth` in `fog_run.json` records the depth source, the scale, the number of points used, the residual error after correction, and the label and point cloud files used.
-- **Only in `degfw fog`:** `degfw run fog`, configuration files and the GUI cannot use it yet, because the degradation interface does not get where the image comes from; this waits for M3.
+- **Also in `degfw run fog` and configuration files:** parameter `lidar`, e.g. `-p lidar=D:\data\a9_dataset_r02_s03`,
+  or in a configuration file `params: {visibility: 100, lidar: "D:/data/a9_dataset_r02_s03"}`. A folder that does not exist is reported before any work.
 - **Only the TUMTraf label format for now:** another dataset needs another reader in `degradation_fw/datasets/`.
 
 ## Parameters
@@ -48,6 +50,7 @@ uv run degfw fog -i a9_dataset_r02_s03/images/s110_camera_basler_south2_8mm -o o
 |---|---|---|---|
 | `visibility` | Int, 5–2000 | 100 | Visibility (meteorological optical range) in metres; lower = denser fog |
 | `fp16` | Bool | false | Run Depth Pro in half precision: about 20x faster, depth differs by about 0.1 % (median), results differ slightly |
+| `lidar` | Folder | empty | LiDAR folder, as `degfw fog --lidar`; empty = Depth Pro only |
 
 ## Method (same as Clear2Fog)
 
@@ -70,11 +73,16 @@ For images without an EXIF orientation tag, none of these changes the result (fl
 
 ## `degfw fog` versus `degfw run fog`
 
+Both call the same fog code (`FogRun` in `fog.py`): focal length, depth, LiDAR correction, atmospheric light and fog are the same in every step,
+so the same images at the same visibility give pixel-identical results ([decision 0010](../decisions/0010-context-one-fog-code.md)).
+`degfw run fog` gets the same information as `degfw fog` through the source information the framework hands to each degradation (the image's file, all images of the run). They differ only in usage and output:
+
 | | `degfw fog` | `degfw run fog` / configuration file / GUI |
 |---|---|---|
-| Focal length | From the file's EXIF (if present) | Estimated by Depth Pro (the framework's degradation interface only gets the pixels) |
-| Images without sky | Average atmospheric light of the whole input set | Always 0.8 |
-| LiDAR depth correction | `--lidar` | Not available yet (M3) |
-| Output | `foggy_*_vis_*.png` + `fog_run.json` | As for every degradation: `.png` + `.json` of the same name |
+| Visibility | Several at once, the depth of each image computed only once | One at a time |
+| Which images | The .png .jpg .jpeg directly in each folder | Also subfolders, more formats (see [architecture.md](../architecture.md) 4.1) |
+| Output | `foggy_*_vis_*.png` + one `fog_run.json` per run | As for every degradation: `.png` + `.json` of the same name, the fog's record under this step's `info` in the `.json` |
 
-So for photos with an EXIF focal length, or images without sky, the two ways can give different results.
+- **The batch-average atmospheric light is computed over the images each one reads:** if the input folder has subfolders or other formats, the two read different images, and images without sky may come out differently.
+- **A single image in memory** (e.g. a preview in the GUI, `get("fog")(image)`): no file, so no EXIF focal length, no LiDAR point cloud and no other images to average over;
+  0.8 if it has no sky.

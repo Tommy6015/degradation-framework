@@ -83,13 +83,12 @@ def test_lidar_scaled_depth_falls_back_to_depth_pro(tmp_path):
         assert reason in record["lidar_not_used"]
 
 
-@pytest.mark.slow
-def test_fog_command_with_lidar(usable, tmp_path):
-    """degfw fog --lidar: an image with a TUMTraf label and point cloud gets its depth
-    scaled (denser fog here, the LiDAR says the scene is farther away), an image
-    without one keeps Depth Pro's depth; both recorded in fog_run.json."""
-    usable("fog")
-    from degradation_fw.degradations.weather.fog import engine, run_cli
+def tumtraf_folder(tmp_path, fp16=False):
+    """Two images, 0001_cam.png and 0002_cam.png (the reference scene), and TUMTraf-like
+    LiDAR data for 0001 only: a label file and a point cloud in the camera's own frame,
+    3x farther away than Depth Pro (of the given precision) says. Returns (image folder,
+    LiDAR folder)."""
+    from degradation_fw.degradations.weather.fog import FogRun
 
     # TUMTraf naming: the camera's name is part of the image file name, the LiDAR's
     # name part of the point cloud file name
@@ -99,8 +98,7 @@ def test_fog_command_with_lidar(usable, tmp_path):
     rgb = np.asarray(Image.open(REFERENCE_INPUT).convert("RGB"))  # 96 x 128
     for name in ("0001_cam.png", "0002_cam.png"):
         Image.fromarray(rgb).save(images / name)
-    # a LiDAR frame for 0001 only, in the camera's own frame, 3x farther than Depth Pro says
-    depth_pro = engine().load(images / "0001_cam.png")[1]
+    depth_pro = FogRun([], fp16).load(images / "0001_cam.png")[1]  # Depth Pro alone
     lidar_view(lidar, scene_points(depth_pro * 3, 400), name="0001_lidar.pcd")
     (lidar / "0001_lidar.json").write_text(json.dumps({"openlabel": {
         "coordinate_systems": {"lidar": {"parent": ""},
@@ -109,7 +107,18 @@ def test_fog_command_with_lidar(usable, tmp_path):
             "width_px": 128, "height_px": 96, "camera_matrix_3x4": np.c_[CAMERA_MATRIX, np.zeros(3)].tolist()}}}},
         "frames": {"0": {"frame_properties": {"point_cloud_file_name": "0001_lidar.pcd",
                                               "image_file_names": ["0001_cam.png"]}}}}}))
+    return images, lidar
 
+
+@pytest.mark.slow
+def test_fog_command_with_lidar(usable, tmp_path):
+    """degfw fog --lidar: an image with a TUMTraf label and point cloud gets its depth
+    scaled (denser fog here, the LiDAR says the scene is farther away), an image
+    without one keeps Depth Pro's depth; both recorded in fog_run.json."""
+    usable("fog")
+    from degradation_fw.degradations.weather.fog import run_cli
+
+    images, lidar = tumtraf_folder(tmp_path)
     assert run_cli([images], tmp_path / "out", [REFERENCE_VISIBILITY], lidar=lidar) == 0
     record = json.loads((tmp_path / "out" / "fog_run.json").read_text(encoding="utf-8"))
     assert record["lidar"] == str(lidar)
@@ -119,6 +128,35 @@ def test_fog_command_with_lidar(usable, tmp_path):
     foggy = [np.asarray(Image.open(tmp_path / "out" / f"foggy_{n}_cam_vis_{REFERENCE_VISIBILITY}.png"), float)
              for n in ("0001", "0002")]
     assert foggy[0].std() < foggy[1].std()  # 3x farther -> denser fog, less contrast left
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("with_lidar", [False, True])
+def test_fog_degradation_same_as_fog_command(usable, tmp_path, with_lidar):
+    """The registered degradation (degfw run / apply / GUI) and degfw fog share one fog
+    code (decision 0010): same input folder, same visibility -> the same pixels, and the
+    same depth and atmospheric light recorded per image. fp16 on both sides: the check
+    does not depend on the precision, and it is ~5x faster than float32."""
+    usable("fog")
+    from degradation_fw import Pipeline, Step
+    from degradation_fw.degradations.weather.fog import run_cli
+
+    images, lidar = tumtraf_folder(tmp_path, fp16=True)
+    lidar_arg = lidar if with_lidar else None
+    assert run_cli([images], tmp_path / "cmd", [REFERENCE_VISIBILITY], fp16=True, lidar=lidar_arg) == 0
+    record = json.loads((tmp_path / "cmd" / "fog_run.json").read_text(encoding="utf-8"))
+    params = {"visibility": REFERENCE_VISIBILITY, "fp16": True, "lidar": str(lidar) if with_lidar else ""}
+    outs = Pipeline([Step("fog", params)], seed=0).run_folder(images, tmp_path / "deg")
+    assert [o.name for o in outs] == ["0001_cam.png", "0002_cam.png"]
+    for o in outs:
+        cmd = np.asarray(Image.open(tmp_path / "cmd" / f"foggy_{o.stem}_vis_{REFERENCE_VISIBILITY}.png"))
+        np.testing.assert_array_equal(np.asarray(Image.open(o)), cmd)
+        info = json.loads(o.with_suffix(".json").read_text(encoding="utf-8"))["steps"][0]["info"]
+        expected = record["images"][o.stem]
+        for key in ("atmospheric_light", "depth_m", "depth"):
+            assert info[key] == expected[key], key
+    scale = json.loads(outs[0].with_suffix(".json").read_text(encoding="utf-8"))["steps"][0]["info"]["depth"]
+    assert ("lidar_scale" in scale) == with_lidar
 
 
 @pytest.mark.slow

@@ -46,19 +46,31 @@ def _check_usable(names: Iterable[str]) -> None:
             raise SystemExit(f"{name} cannot run here:\n{reason}")
 
 
+def _check_params(steps: Iterable[Step]) -> None:
+    """Exit with a clear message if a step has unknown or invalid params, before any work."""
+    for step in steps:
+        try:
+            registry.get(step.name).resolve_params(step.params)
+        except (KeyError, ValueError) as e:
+            raise SystemExit(e.args[0]) from None
+
+
 def _run_pipeline(p: Pipeline, src: str | Path, dst: str | Path) -> None:
     """Image -> image file; folder -> folder (with pipeline.yaml). Shared by run and apply."""
     src, dst = Path(src), Path(dst)
-    if src.is_dir():
-        dst.mkdir(parents=True, exist_ok=True)
-        p.save(dst / "pipeline.yaml")
-        outs = p.run_folder(src, dst, progress=lambda i, n, f: print(f"[{i}/{n}] {f}"))
-        print(f"Done: {len(outs)} images -> {dst}")
-    elif src.is_file():
-        meta = p.run_file(src, dst)
-        print(f"Done: {dst} (seed={meta['seed']})")
-    else:
-        raise SystemExit(f"Not found: {src}")
+    try:
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+            p.save(dst / "pipeline.yaml")
+            outs = p.run_folder(src, dst, progress=lambda i, n, f: print(f"[{i}/{n}] {f}"))
+            print(f"Done: {len(outs)} images -> {dst}")
+        elif src.is_file():
+            meta = p.run_file(src, dst)
+            print(f"Done: {dst} (seed={meta['seed']})")
+        else:
+            raise SystemExit(f"Not found: {src}")
+    except FileNotFoundError as e:  # e.g. a LiDAR folder without label files
+        raise SystemExit(str(e)) from None
 
 
 def _parse_params(items: list[str] | None) -> dict:
@@ -76,11 +88,9 @@ def _parse_params(items: list[str] | None) -> dict:
 def _cmd_run(args) -> None:
     params = _parse_params(args.param)
     _check_usable([args.name])
-    try:
-        registry.get(args.name).resolve_params(params)  # unknown / invalid params: stop before any work
-    except (KeyError, ValueError) as e:
-        raise SystemExit(e.args[0]) from None
-    _run_pipeline(Pipeline([Step(args.name, params)], seed=args.seed), args.input, args.output)
+    p = Pipeline([Step(args.name, params)], seed=args.seed)
+    _check_params(p.steps)  # unknown / invalid params: stop before any work
+    _run_pipeline(p, args.input, args.output)
 
 
 def _cmd_apply(args) -> None:
@@ -88,6 +98,7 @@ def _cmd_apply(args) -> None:
     if args.seed is not None:
         p.seed = args.seed
     _check_usable(s.name for s in p.steps)
+    _check_params(p.steps)
     _run_pipeline(p, args.input, args.output)
 
 

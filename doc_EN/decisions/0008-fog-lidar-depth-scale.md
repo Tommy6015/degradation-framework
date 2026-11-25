@@ -55,4 +55,6 @@
   Whether to correct the scale another way (e.g. with a camera calibration, from the camera height and the ground plane, which give the distance of the road) is decided together with the intensity levels (F4).
 - **Only `degfw fog` can use it:** `degfw run fog`, `apply` and the GUI cannot use the LiDAR yet, because the degradation interface only gets the pixels, not where the image comes from;
   this waits for the M3 interface extension (source information).
+  **Update 2026-11-25:** solved. Degradations now get the source information; the fog's parameter `lidar` works in `degfw run fog`, configuration files and the GUI,
+  with the same results as `degfw fog --lidar` ([decision 0010](0010-context-one-fog-code.md)).
 - **Supported:** only TUMTraf OpenLABEL labels, and PCD files with ascii or binary data; no new dependencies.

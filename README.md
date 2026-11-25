@@ -26,7 +26,8 @@ degradation-framework/
 ├── degradation_fw/              ② 你自己的框架代码
 │   ├── core/                       框架核心，一般不用动
 │   │   ├── base.py                   Degradation 基类（统一接口，声明需要的依赖和权重）
-│   │   ├── params.py                 参数类型 Float / Int / Choice / Bool
+│   │   ├── context.py                交给退化的来源信息：来源文件、整批图片、整次运行共用的数据
+│   │   ├── params.py                 参数类型 Float / Int / Choice / Bool / Folder
 │   │   ├── registry.py               注册表（退化 + 退化自带的命令）
 │   │   ├── pipeline.py               多个退化串联、批量处理、保存元数据
 │   │   ├── io.py                     图片读写、格式转换（支持中文路径）
@@ -37,11 +38,9 @@ degradation-framework/
 │   ├── degradations/               ③ 适配器：把开源代码包装成统一接口，按类别分
 │   │   ├── _template.py              新退化照这个模板写
 │   │   ├── weather/                  天气 / 大气
-│   │   │   └── fog.py                  雾：Clear2Fog 适配器 + 它自己注册的 `degfw fog` 命令
-│   │   ├── lens/                     镜头污染
-│   │   │   └── lens_dirt.py            脏污：不透明 + 水滴（待实现）
-│   │   └── sensor/                   传感器 / 成像
-│   │       └── gaussian_noise.py       高斯噪声（示例，验证框架用）
+│   │   │   └── fog.py                  雾：Clear2Fog 适配器 + 它自己注册的 `degfw fog` 命令（两者共用一份代码）
+│   │   └── lens/                     镜头污染
+│   │       └── placement.py            水滴的精确放置（水滴本身接入中，目前用 scripts/ 里的脚本运行）
 │   │
 │   ├── datasets/                   数据集读取（现在：TUMTraf 的点云和标定，供 degfw fog --lidar）
 │   ├── gui/                        界面（暂缓；已有一个能跑的 Gradio 初版）
@@ -85,8 +84,7 @@ degradation-framework/
 
 | 退化 | 说明 | 详细用法 |
 |---|---|---|
-| `fog` | 雾：Clear2Fog（Depth Pro 景深 + 大气散射），有自己的命令 `uv run degfw fog -i 输入 -o 输出 -v 100`；有 LiDAR 点云时加 `--lidar` 校正景深 | [doc/degradations/fog.md](doc/degradations/fog.md) |
-| `gaussian_noise` | 高斯噪声，示例，用来验证框架 | 参数见 `uv run degfw list` |
+| `fog` | 雾：Clear2Fog（Depth Pro 景深 + 大气散射），有自己的命令 `uv run degfw fog -i 输入 -o 输出 -v 100`；有 LiDAR 点云时加 `--lidar` 校正景深。`degfw run fog`、配置文件用的是同一份代码，结果相同 | [doc/degradations/fog.md](doc/degradations/fog.md) |
 | 镜头污染 | 还没接入框架，目前用 `scripts/contamination_examples.py` 单独运行 | [scripts/README.md](scripts/README.md) |
 
 ## 添加一种退化
@@ -109,9 +107,9 @@ degradation-framework/
 uv sync                             # 装好全部依赖（每个 third_party 仓库一组，默认全装）
 uv run degfw weights --download     # 下载缺的模型权重；不加参数只查看状态，--verify 校验 SHA-256
 uv run degfw list                   # 所有退化、参数，以及在这台机器上能不能运行
-uv run degfw run gaussian_noise -i 输入 -o 输出 -p sigma=0.1          # 单个退化
+uv run degfw run fog -i 输入 -o 输出 -p visibility=50 fp16=true      # 单个退化
 uv run degfw apply -c configs/example.yaml -i data/input -o outputs/run1   # 按配置串联多个退化
-uv run pytest                       # 全部测试（含需要 GPU 和模型的，约 2 分钟）
+uv run pytest                       # 全部测试（含需要 GPU 和模型的，约 4 分钟）
 uv run pytest -m "not slow"         # 只跑不需要模型的，不到 1 秒
 ```
 

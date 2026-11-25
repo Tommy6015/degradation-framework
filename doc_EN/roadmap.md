@@ -105,7 +105,7 @@ white dotted box = user of the data outside the thesis. Solid arrow = working; d
 | M0 | Framework skeleton | `core/` (base class, parameters, registry, pipeline, I/O), command line, generic tests, initial Gradio version | N1, F5 | ✅ 2026-11-12 |
 | M1 | Fog | Clear2Fog adapter and `degfw fog`; float32 pixel-identical to the original, `--fp16` about 20x faster | F3 | ✅ 2026-11-19 |
 | M2 | Engineering structure | Third-party conventions, `degfw run` / `degfw weights`, split tests and regression tests; fixes for EXIF orientation, folder seeds, name collisions | N1, N2, F9 | ✅ 2026-11-19 |
-| M3 | Interface extension | Degradations can output masks, several versions per image, get source and batch information, stay consistent within a sequence, have intensity levels; the two output paths unified (`degfw fog` also writes the common format) | F4, F6, F8 | ⏳ Next |
+| M3 | Interface extension | Degradations can output masks, several versions per image, get source and batch information (✅ 2026-11-25, [decision 0010](decisions/0010-context-one-fog-code.md)), stay consistent within a sequence, have intensity levels; the two output paths unified (the fog code is unified and gives the same results; the output formats still differ) | F4, F6, F8 | ⏳ In progress |
 | M4 | Local degradations | Soiling and water drops integrated (with masks); occlusion | F3, F8 | Planned |
 | M5 | Global degradations | Snow, poor exposure, blur; intensity level table for each degradation | F3, F4 | Planned |
 | M6 | Dataset interface | Dataset adapter interface (common representation of images, sequences, annotations; annotations exported in their original format); first adapter TUMTraf A9 as an example; subset selection; export of degraded datasets with annotations | F1, F2, F8, F10, N1 | Planned |
@@ -132,9 +132,10 @@ The research and justification (D1, D2) are written into the thesis alongside th
 1. **Which degradations, which method for each, and why** (D2, F3) → decision 0006.
    Candidate methods: in the local GitHub folder `Rain-Generation-Python` (rain), `fog_simulation-SFSU_synthetic` (another synthetic fog),
    `physical_lens_soiling` (lens soiling by physics-based simulation), plus the already vendored Clear2Fog and camera_contamination_simulation.
-2. **How to extend the interface** (M3: masks, several versions per image, source and batch information, sequence consistency, intensity levels, unified output path) → decision 0007.
-3. **The fog's atmospheric light for images without sky** (M3, F6, F9): currently, for images without sky, `degfw fog` uses the average over the images of the same batch that have sky,
-   and `degfw run fog` always uses 0.8. Roadside cameras often see no sky, so the result depends on which other images are in the batch, and may jump from frame to frame within a sequence.
+2. **How to extend the interface** (M3: masks, several versions per image, sequence consistency, intensity levels, unified output path) → decision 0007.
+   Source and batch information is settled: [decision 0010](decisions/0010-context-one-fog-code.md).
+3. **The fog's atmospheric light for images without sky** (M3, F6, F9): currently, images without sky use the average over the images of the same batch that have sky
+   (the same in `degfw fog` and `degfw run fog`, [decision 0010](decisions/0010-context-one-fog-code.md)). Roadside cameras often see no sky, so the result depends on which other images are in the batch, and may jump from frame to frame within a sequence.
    Candidate approaches: make the atmospheric light a parameter that can be set directly (a given value or "auto"); estimate it once per camera or per sequence and share it;
    make the sky distance threshold (currently 1000 m) adjustable. Details of the method: [degradations/fog.md](degradations/fog.md).
 4. **Dataset interface** (M6): common representation of images, sequences and annotations; copy annotations unchanged, or read them through the adapter and write them back;

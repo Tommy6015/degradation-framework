@@ -2,7 +2,8 @@
 # Run:  uv run degfw apply -c configs/example.yaml -i data/input -o outputs/example
 seed: 0
 steps:
-  - name: gaussian_noise
+  - name: fog
     params:
-      sigma: 0.05
-      per_channel: true
+      visibility: 100     # metres, lower = denser fog
+      fp16: true          # ~20x faster on an 8 GB GPU, at most 2/255 different from float32
+      lidar: ""           # optional: folder with TUMTraf label files and point clouds
