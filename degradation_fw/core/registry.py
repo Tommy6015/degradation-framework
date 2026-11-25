@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .base import Degradation
+from .base import SCOPES, Degradation
 
 if TYPE_CHECKING:
     import argparse
@@ -25,6 +25,8 @@ _REGISTRY: dict[str, type[Degradation]] = {}
 def register(cls: type[Degradation]) -> type[Degradation]:
     if not cls.name:
         raise ValueError(f"{cls.__name__} has no `name`")
+    if cls.scope not in SCOPES:
+        raise ValueError(f"{cls.name}: scope must be one of {SCOPES}, got {cls.scope!r}")
     reserved = {"image", "rng", "context"} & set(cls.params)  # the other arguments of apply()
     if reserved:
         raise ValueError(f"{cls.name}: parameter name(s) {sorted(reserved)} are reserved")

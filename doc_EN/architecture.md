@@ -20,7 +20,7 @@ flowchart TB
     subgraph L1["Entry layer"]
         cli["cli.py<br/>degfw command"]
         main["__main__.py<br/>python -m"]
-        gui["gui/app.py<br/>(optional)"]
+        gui["gui/<br/>GUI (optional)"]
         scripts["scripts/<br/>experiments"]
     end
 
@@ -91,7 +91,8 @@ Labels on the arrows: «use» = calls / inherits from the layer below; «import�
 | `degradation_fw/__init__.py` | core.base, core.context, core.params, core.pipeline, core.registry | Public interface |
 | `__main__.py` | cli | |
 | `cli.py` | core.registry, core.pipeline; when needed: core.weights, gui.app | |
-| `gui/app.py` | core.registry, core.io, core.params, core.pipeline | Needs gradio |
+| `gui/app.py` | gui.logic, core.registry, core.base, core.io, core.params | GUI layout; needs gradio |
+| `gui/logic.py` | core.registry, core.base, core.io, core.pipeline | What the GUI does (menu, folder checks, preview, generation); no gradio needed |
 | `core/pipeline.py` | core.registry, core.io, core.context | |
 | `core/registry.py` | core.base; at the first lookup: degradations | |
 | `core/base.py` | core.params, core.context; when needed: core.weights | |
@@ -116,12 +117,14 @@ classDiagram
         <<abstract>>
         +name: str
         +label: str
+        +scope: str
         +params: dict
         +requires_modules: tuple
         +requires_weights: tuple
         +unavailable_reason() str
         +resolve_params(overrides) dict
         +apply(image, rng, context, params) ndarray
+        +describe(info) str
     }
     class Fog {
         «param» visibility: Int
@@ -213,6 +216,8 @@ classDiagram
 - `Degradation` is the abstract base class; subclasses implement `apply()` and may only use the `rng` passed in for randomness.
   `Degradation.__call__(image, rng, context, **params)` first fills in defaults and validates the parameters (`resolve_params`), then calls the subclass's `apply`, and finally clips the result to `[0, 1]`;
   without a `context` it uses an empty one, as for an image in memory.
+- `scope` is `global` (acts on the whole image, e.g. fog) or `local` (acts on a part of it, e.g. a raindrop on the lens), checked at registration; the GUI groups its menu by it.
+  `describe(info)` turns what the degradation recorded in `context.info` into one line for people (one line per image in the GUI).
 - `Context` is what is known about the image besides its pixels ([decision 0010](decisions/0010-context-one-fog-code.md)): its file `source`, all input files of the run `batch`,
   `shared` for the whole run (one per step), and `info`, the degradation's record (written to the `.json`). Most degradations ignore it.
 - `Pipeline` gets each step's degradation from the registry by name (`registry.get`); `registry` holds all registered subclasses.
@@ -380,7 +385,9 @@ data/input/                     outputs/run1/
 - Redo a single image: `Pipeline.from_file("outputs/run1/pipeline.yaml").run_file(original, output, seed=seed from the json)`.
   A fog image without sky also needs the same batch to come out the same, `batch=` (all inputs of that batch), because its atmospheric light is the batch average.
 - For a single input file, `-o` is the output file name (e.g. `out.png`); an `out.json` is written next to it, no `pipeline.yaml`.
-- The GUI's single-image mode shows result and metadata in the UI without saving files. In scripts, `Pipeline.run(image)` returns (result image, metadata) directly.
+- The GUI's generation takes exactly this path (`generate` in `gui/logic.py` calls `Pipeline.run_folder`, seed 0), so its output is the same as `degfw run`'s.
+  The GUI's preview shows one image without saving it: same seed, and the whole input folder as the batch, so it is pixel for pixel the generated image.
+  In scripts, `Pipeline.run(image)` returns (result image, metadata) directly.
 
 ### 4.3 Output: `degfw fog` (the fog's own command, used like the original `c2f.py`)
 

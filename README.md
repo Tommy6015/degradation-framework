@@ -1,7 +1,7 @@
 # degradation-framework：图像退化生成框架
 
 用统一接口封装各种图像退化（雾、镜头脏污、水滴……），可单张或批量处理，参数和随机种子全程可复现。
-图形界面暂缓，等底层退化做好再接。
+有英文的图形界面：选文件夹、选退化、预览、生成，结果和命令行完全相同。
 
 仓库名用全称 `degradation-framework`；代码里用简写：Python 包名 `degradation_fw`（`import degradation_fw`），命令行命令 `degfw`。
 
@@ -43,7 +43,7 @@ degradation-framework/
 │   │       └── placement.py            水滴的精确放置（水滴本身接入中，目前用 scripts/ 里的脚本运行）
 │   │
 │   ├── datasets/                   数据集读取（现在：TUMTraf 的点云和标定，供 degfw fog --lidar）
-│   ├── gui/                        界面（暂缓；已有一个能跑的 Gradio 初版）
+│   ├── gui/                        界面（Gradio，全英文）：app.py 是布局，logic.py 是它做的事
 │   └── cli.py                      命令行入口（不含任何具体退化的代码）
 │
 ├── configs/                     ④ 参数预设（YAML），一次实验一个文件
@@ -123,7 +123,7 @@ uv run pytest -m "not slow"         # 只跑不需要模型的，不到 1 秒
 处理文件夹时，每张图的种子由配置里的种子和这张图的相对路径算出：文件夹里增删别的图片，不会改变它的结果。
 输出一律是 `.png`；同一个文件夹里主名相同的图片（如 `a.jpg` 和 `a.png`）输出为 `a.png` 和 `a_2.png`，不会互相覆盖。
 
-界面（可选）：`uv sync --extra gui`，然后 `uv run degfw gui`。
+界面：`uv run --extra gui degfw gui`（第一次会先装 gradio），用法见 [doc/commands.md](doc/commands.md) 第 7 节。
 
 ## 图像约定
 

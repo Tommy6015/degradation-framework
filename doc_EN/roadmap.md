@@ -84,7 +84,7 @@ white dotted box = user of the data outside the thesis. Solid arrow = working; d
 | Other datasets | Adapters added as needed | F1 | — |
 | Config | Dataset / subset, degradation types, intensity levels and seed are all written in a configuration file | F2, F4, F10 | Degradations, parameters, seed ✅; subset, intensity ❌ |
 | Unified interface and pipeline | Parameter checks, per-image seeds, batch processing, metadata | F5, F9, N1 | Done (M0, M2) |
-| Preview | See the effect before generating a whole dataset | F7 | Initial Gradio version, to be brought up to date (M7) |
+| Preview | See the effect before generating a whole dataset | F7 | New GUI (English): folders, global / local, parameters, preview, generation; fog now, raindrops appear once integrated (M7) |
 | Fog | Clear2Fog: monocular depth + atmospheric scattering model; with LiDAR, the point clouds correct the depth scale | F3 | Done (M1); LiDAR correction 11-24 ([decision 0008](decisions/0008-fog-lidar-depth-scale.md)) |
 | Snow, exposure, blur | The remaining global degradations | F3 | Planned (M5) |
 | Soiling, water drops | Lens contamination: opaque / semi-transparent soiling, water drops | F3 | Code vendored, integration in progress (M4) |
@@ -109,7 +109,7 @@ white dotted box = user of the data outside the thesis. Solid arrow = working; d
 | M4 | Local degradations | Soiling and water drops integrated (with masks); occlusion | F3, F8 | Planned |
 | M5 | Global degradations | Snow, poor exposure, blur; intensity level table for each degradation | F3, F4 | Planned |
 | M6 | Dataset interface | Dataset adapter interface (common representation of images, sequences, annotations; annotations exported in their original format); first adapter TUMTraf A9 as an example; subset selection; export of degraded datasets with annotations | F1, F2, F8, F10, N1 | Planned |
-| M7 | Preview | Update the Gradio UI: choose images, degradations, intensities; side-by-side preview | F7 | Planned |
+| M7 | Preview | Update the Gradio UI: choose images, degradations, intensities; side-by-side preview | F7 | ⏳ In progress: new GUI with fog usable (2026-11-25); raindrops and comparing intensities to do |
 | M8 | Plausibility and usability evaluation | Comparison with real degraded data; checks of intensity levels and labels | E1, E2 | Planned |
 | M9 | Effect on object detection | One object detection method evaluated on clean data and on each degradation and intensity | E4 | Planned |
 | M10 | Framework evaluation and final thesis | Check against the requirements one by one; finalise the thesis | E3 | Planned |

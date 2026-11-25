@@ -21,7 +21,7 @@ BUILTIN_COMMANDS = {"list", "run", "apply", "weights", "gui"}
 def _cmd_list(args) -> None:
     for name in registry.available():
         deg = registry.get(name)
-        print(f"{name}  -  {deg.label}")
+        print(f"{name}  -  {deg.label}  [{deg.scope}]")
         for key, spec in deg.params.items():
             extra = ""
             if hasattr(spec, "min"):
@@ -131,7 +131,7 @@ def _cmd_gui(args) -> None:
     try:
         from .gui.app import launch
     except ImportError:
-        raise SystemExit("GUI not installed. Run:  uv sync --extra gui") from None
+        raise SystemExit("GUI not installed. Start it with:  uv run --extra gui degfw gui") from None
     launch(server_name=args.host, server_port=args.port, inbrowser=not args.no_browser)
 
 

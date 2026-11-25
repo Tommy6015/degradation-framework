@@ -32,7 +32,7 @@ $tag = "261123_01"                                   # ID of this test run; use 
 | `uv run degfw run <name>` | Runs a single degradation, without a configuration file; parameters are given with `-p` |
 | `uv run degfw apply -c <config>` | Chains several degradations as described in a configuration file |
 | `uv run degfw fog` | The fog's own command, used like the original `c2f.py`; with LiDAR point clouds, `--lidar` corrects the depth |
-| `uv run degfw gui` | Graphical interface (run `uv sync --extra gui` first) |
+| `uv run --extra gui degfw gui` | Graphical interface, see section 7 |
 | `uv run python scripts/contamination_examples.py` | Lens contamination: water drops, opaque soiling, semi-transparent soiling |
 | `uv run pytest` | Runs the tests |
 
@@ -73,7 +73,7 @@ Caveats:
   `degfw fog` takes several visibilities at once and writes `foggy_*.png` and `fog_run.json`; `degfw run fog` takes one visibility
   and writes the same output as any other degradation, with the fog's record (where depth and atmospheric light came from) under `info` in each image's `.json`.
   Also, `degfw run` goes into subfolders, `degfw fog` does not.
-- **Interface:** without gradio installed, `degfw gui` only prints `GUI not installed. Run: uv sync --extra gui`.
+- **Interface:** start it with `uv run --extra gui degfw gui`, see section 7.
 
 ## 4. Fog: `degfw fog`
 
@@ -315,6 +315,34 @@ Three things to watch out for:
 | The contamination script says `no images found` | The image format is not supported (formats in 5.1), or the images are in subfolders and `--recursive` is missing |
 | The contamination script says something like `x and y must be in 0..1, size in (0, 1]` | A value is out of range; correct it as the message says. No image is generated in this case |
 | The contamination script says `the network drew no droplet in 20 attempts` | The water drop's SIZE is too small for the network; use a larger SIZE. This image is not generated, the others are processed as usual |
-| `degfw gui` says `GUI not installed` | Run `uv sync --extra gui` first |
+| `degfw gui` says `GUI not installed` | Start it with `uv run --extra gui degfw gui`, which installs gradio first |
 | Fog is very slow (about 20 seconds per image) | `--fp16` is missing, see section 4 |
 | With `--lidar`: `No TUMTraf (OpenLABEL) label files with LiDAR frames found` | The given folder (including subfolders) contains no TUMTraf label files. Check the path; usually give the dataset root |
+
+
+## 7. The GUI: `degfw gui`
+
+```powershell
+cd "D:\Laptops\Documents\GitHub\degradation-framework"
+uv run --extra gui degfw gui
+```
+
+- **Start:**
+  - the first run installs gradio first; after that it is installed;
+  - a few seconds later `http://127.0.0.1:7860/` opens in the browser;
+  - stop: Ctrl+C in the terminal.
+  - If the port is taken, add `--port 7861`; to start without opening the browser, add `--no-browser`.
+- **Fill it in from top to bottom; all text is English:**
+  1. **Input folder:** the folder with the input images, including the images in subfolders. Paste a path or click Browse…. When you leave the box, the number of images found is shown below it.
+  2. **Output folder:** the folder for the results; not the input folder itself and not inside it. If it is not empty, a note says that results with the same names will be overwritten.
+  3. **Type of degradation:** Global acts on the whole image, e.g. fog; Local acts on a part of it, e.g. a raindrop on the lens (raindrops are being integrated).
+  4. **Degradation:** choose one degradation of this type.
+  5. **Parameters:** for fog Visibility (m), Half precision (fp16) and LiDAR folder (optional), as explained in section 4.
+  6. **Preview:** choose one input image and click Preview: original on the left, result on the right, and below a line saying where depth and atmospheric light came from.
+  7. **Generate:** processes the whole input folder, with a progress bar. When done, it shows the time taken and one line per image.
+- **Exactly the same results as on the command line:** as with `degfw run fog`, a `.png` and a `.json` per image, plus one `pipeline.yaml` in the output folder.
+  To repeat the run: `uv run degfw apply -c "<output folder>\pipeline.yaml" -i <input folder> -o <another folder>`.
+- **The preview is pixel for pixel the generated image:** the preview also takes the whole input folder as the batch. Images without sky use the batch-average atmospheric light,
+  so the first preview of such an image computes the whole batch first and takes longer.
+- **The first preview or generation loads Depth Pro first:** about 10 seconds.
+- **The seed is fixed at 0:** fog has no randomness.

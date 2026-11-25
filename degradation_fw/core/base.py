@@ -10,19 +10,24 @@ import numpy as np
 from .context import Context
 from .params import Param
 
+# Where a degradation acts: on the whole image (e.g. fog) or on a part of it (e.g. a
+# raindrop on the lens). The GUI groups its menu by this; every degradation declares one.
+SCOPES = ("global", "local")
+
 
 class Degradation:
     """Unified interface for one kind of degradation.
 
-    Subclasses set ``name`` / ``label`` / ``params`` and implement ``apply``.
+    Subclasses set ``name`` / ``label`` / ``scope`` / ``params`` and implement ``apply``.
 
     Image convention: float32, shape (H, W, 3), RGB, values in [0, 1].
     Parameters may not be called image, rng or context (the arguments of ``apply``).
     """
 
     name: ClassVar[str] = ""          # unique id used in configs, e.g. "fog"
-    label: ClassVar[str] = ""         # display name in the GUI
-    description: ClassVar[str] = ""
+    label: ClassVar[str] = ""         # display name in the GUI (English)
+    description: ClassVar[str] = ""   # one sentence (English), shown in the GUI
+    scope: ClassVar[str] = ""         # "global" (whole image) or "local" (part of it), see SCOPES
     params: ClassVar[dict[str, Param]] = {}
 
     # What it needs to run, checked by unavailable_reason(): if something is missing,
@@ -43,6 +48,13 @@ class Degradation:
 
             return missing_weights(cls.requires_weights)
         return None
+
+    @classmethod
+    def describe(cls, info: dict[str, Any]) -> str:
+        """One line for people about what this degradation recorded in context.info for
+        an image (the GUI shows it per image). Default: key=value pairs; override to say
+        it better."""
+        return ", ".join(f"{k}={v}" for k, v in info.items())
 
     def resolve_params(self, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         """Fill in defaults and validate. Unknown keys raise an error."""

@@ -1,7 +1,5 @@
-"""图形界面 —— 暂缓，等底层退化做好再接。
+"""The GUI (gradio, optional): app.py is the layout, logic.py what it does (no gradio
+needed, so it is tested without the GUI installed).
 
-app.py 是一个已能运行的 Gradio 初版，控件根据各退化的 params 自动生成，
-底层加了新退化不用改这里。需要时：
-    uv sync --extra gui
-    uv run degfw gui
+Start it with:  uv run --extra gui degfw gui
 """

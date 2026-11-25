@@ -25,7 +25,8 @@ class NoiseForTests(Degradation):
     """Additive Gaussian noise: uses rng and has parameters with ranges."""
 
     name = "test_noise"
-    label = "测试用噪声 Noise (tests only)"
+    label = "Noise (tests only)"
+    scope = "global"
     params = {
         "sigma": Float(default=0.05, min=0.0, max=0.5, step=0.005, label="sigma"),
         "per_channel": Bool(default=True, label="per channel"),
@@ -43,7 +44,8 @@ class ContextForTests(Degradation):
     in context.shared, which lasts for the whole run)."""
 
     name = "test_context"
-    label = "测试用来源信息 Context (tests only)"
+    label = "Context (tests only)"
+    scope = "local"
     params = {"folder": Folder(label="a folder (optional)")}
 
     def apply(self, image, rng, context, folder):

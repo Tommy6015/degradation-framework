@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from degradation_fw import available, get
+from degradation_fw.core.base import SCOPES
 from degradation_fw.core.weights import manifest
 
 
@@ -34,9 +35,12 @@ def test_every_degradation_is_reproducible(name, image, usable):
 
 @pytest.mark.parametrize("name", available())
 def test_every_degradation_declares_itself(name):
-    """Label set, defaults valid, and every requires_weights id is in weights.yaml."""
+    """Label set (English), scope global or local, defaults valid, and every
+    requires_weights id is in weights.yaml."""
     deg = get(name)
-    assert deg.name == name and deg.label
+    assert deg.name == name and deg.label and deg.label.isascii()
+    assert deg.scope in SCOPES
+    assert all((spec.label or "").isascii() for spec in deg.params.values())
     for spec in deg.params.values():
         spec.validate(spec.default)
     unknown = set(deg.requires_weights) - set(manifest())

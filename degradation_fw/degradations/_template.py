@@ -61,14 +61,15 @@ def _model():
 @register
 class MyDegradation(Degradation):
     name = "my_degradation"            # unique id, used in configs and `degfw run`
-    label = "显示名称 Display name"     # shown in the GUI
-    description = "One-line description."
+    label = "Display name"             # shown in the GUI, English
+    description = "One-line description."  # English
+    scope = "global"                   # "global" (whole image) or "local" (part of it)
     requires_modules = ("torch", "cv2")         # from its dependency group
     requires_weights = ("my_model_weights",)    # ids in third_party/weights.yaml
     params = {
-        "strength": Float(default=0.5, min=0.0, max=1.0, step=0.01, label="强度"),
-        "count": Int(default=10, min=0, max=200, label="数量"),
-        "mode": Choice(default="a", choices=("a", "b"), label="模式"),
+        "strength": Float(default=0.5, min=0.0, max=1.0, step=0.01, label="Strength"),
+        "count": Int(default=10, min=0, max=200, label="Count"),
+        "mode": Choice(default="a", choices=("a", "b"), label="Mode"),
     }
 
     def apply(self, image: np.ndarray, rng: np.random.Generator, context, strength, count, mode):

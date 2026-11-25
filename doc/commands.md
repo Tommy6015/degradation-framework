@@ -32,7 +32,7 @@ $tag = "261123_01"                                   # 这次试验的编号，�
 | `uv run degfw run <名字>` | 运行单个退化，不用配置文件，参数用 `-p` 给 |
 | `uv run degfw apply -c <配置>` | 按配置文件串联多个退化 |
 | `uv run degfw fog` | 雾的专门命令，用法同原版 `c2f.py`；有 LiDAR 点云时可加 `--lidar` 校正景深 |
-| `uv run degfw gui` | 图形界面（要先运行 `uv sync --extra gui`） |
+| `uv run --extra gui degfw gui` | 图形界面，见第 7 节 |
 | `uv run python scripts/contamination_examples.py` | 镜头污染：水滴、不透明污渍、半透明污渍 |
 | `uv run pytest` | 运行测试 |
 
@@ -73,7 +73,7 @@ uv run pytest                         # 全部，约 4 分钟，需要 GPU 和�
   `degfw fog` 一次可以给多个能见度，输出 `foggy_*.png` 和 `fog_run.json`；`degfw run fog` 一次一个能见度，
   输出和其他退化一样，雾的记录（景深、大气光从哪来）在每张图 `.json` 的 `info` 里。
   另外 `degfw run` 会进子文件夹，`degfw fog` 不进。
-- **界面：** 没装 gradio 时，`degfw gui` 只会提示 `GUI not installed. Run: uv sync --extra gui`。
+- **界面：** 用 `uv run --extra gui degfw gui` 启动，见第 7 节。
 
 ## 4. 雾：`degfw fog`
 
@@ -315,6 +315,34 @@ uv run python scripts/contamination_examples.py $a --image $src --out "$out\Semi
 | 污染脚本提示 `no images found` | 图片格式不支持（支持的格式见 5.1），或者图在子文件夹里、忘了加 `--recursive` |
 | 污染脚本提示 `x and y must be in 0..1, size in (0, 1]` 之类 | 数值超出范围，按提示改；这时不会生成任何图 |
 | 污染脚本提示 `the network drew no droplet in 20 attempts` | 水滴的 SIZE 太小，网络画不出来；把 SIZE 调大。这张图不生成，其他图照常处理 |
-| `degfw gui` 提示 `GUI not installed` | 先运行 `uv sync --extra gui` |
+| `degfw gui` 提示 `GUI not installed` | 用 `uv run --extra gui degfw gui` 启动，会先装好 gradio |
 | 雾跑得很慢（每张约 20 秒） | 没加 `--fp16`，见第 4 节 |
 | 加了 `--lidar`，提示 `No TUMTraf (OpenLABEL) label files with LiDAR frames found` | 给的文件夹里（包括子文件夹）没有 TUMTraf 的标注文件。检查路径，一般给数据集的根目录 |
+
+
+## 7. 界面：`degfw gui`
+
+```powershell
+cd "D:\Laptops\Documents\GitHub\degradation-framework"
+uv run --extra gui degfw gui
+```
+
+- **启动：**
+  - 第一次运行会先安装 gradio，之后就不用再装了；
+  - 几秒后会自动在浏览器里打开 `http://127.0.0.1:7860/`；
+  - 停止：在终端里按 Ctrl+C。
+  - 端口被占用时，加 `--port 7861`；只启动、不打开浏览器，加 `--no-browser`。
+- **按编号从上往下填，界面全是英文：**
+  1. **Input folder：** 输入图片的文件夹，包括子文件夹里的图。可以粘贴路径，也可以点 Browse… 选。离开输入框后，下面会显示找到几张图。
+  2. **Output folder：** 输出文件夹，不能是输入文件夹本身，也不能在它里面。不是空的时会提示：同名文件会被覆盖。
+  3. **Type of degradation：** Global 是作用在整张图上的退化，如雾；Local 是作用在局部的退化，如镜头上的雨滴，雨滴还在接入中。
+  4. **Degradation：** 在这一类里选一种退化。
+  5. **Parameters：** 雾的参数是 Visibility (m)、Half precision (fp16) 和 LiDAR folder (optional)，含义见第 4 节。
+  6. **Preview：** 从输入里选一张图，点 Preview：左边是原图，右边是结果，下面一行写景深和大气光是从哪来的。
+  7. **Generate：** 处理整个输入文件夹，带进度条。完成后显示用时，每张图一行说明。
+- **结果和命令行完全一样：** 和 `degfw run fog` 一样，每张图一个 `.png` 加一个 `.json`，输出文件夹里另有一份 `pipeline.yaml`。
+  要重做一遍：`uv run degfw apply -c "<输出文件夹>\pipeline.yaml" -i <输入文件夹> -o <另一个文件夹>`。
+- **预览和正式生成的那张逐像素相同：** 预览也把整个输入文件夹当作同一批。没有天空的图要用整批的平均大气光，
+  所以预览这样一张图时，第一次要先把整批算一遍，会慢一些。
+- **第一次预览或生成时要先加载 Depth Pro：** 约 10 秒。
+- **种子固定为 0：** 雾没有随机性。

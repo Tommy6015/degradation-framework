@@ -198,20 +198,40 @@ def _release_engine() -> None:
 @register
 class Fog(Degradation):
     name = "fog"
-    label = "雾 Fog (Clear2Fog)"
+    label = "Fog (Clear2Fog)"
     description = ("Clear2Fog: Depth Pro monocular depth + atmospheric scattering model. "
                    "Lower visibility = denser fog.")
+    scope = "global"
     requires_modules = MODULES
     requires_weights = WEIGHTS
     params = {
-        "visibility": Int(default=100, min=5, max=2000, step=5, label="能见度 visibility (m)",
+        "visibility": Int(default=100, min=5, max=2000, step=5, label="Visibility (m)",
                           help="Meteorological optical range in metres; lower = denser fog"),
-        "fp16": Bool(default=False, label="半精度 fp16 (快约 20 倍，结果略有差异)",
+        "fp16": Bool(default=False, label="Half precision (fp16): ~20x faster, results differ slightly",
                      help="Run Depth Pro in float16: much faster on GPU, depth differs by ~0.1 %"),
-        "lidar": Folder(label="LiDAR 文件夹 (可选)",
+        "lidar": Folder(label="LiDAR folder (optional)",
                         help="Correct the depth scale with LiDAR: folder with TUMTraf (A9) OpenLABEL label "
                              "files and point clouds, searched recursively (as degfw fog --lidar)"),
     }
+
+    @classmethod
+    def describe(cls, info):
+        """E.g. "depth: LiDAR x 8.18 (4829 points, error 2.3%); light: from its own sky"."""
+        depth = info.get("depth", {})
+        if "lidar_scale" in depth:
+            source = (f"LiDAR x {depth['lidar_scale']:.2f} ({depth['lidar_points']} points, "
+                      f"error {depth['lidar_rel_error']['median']:.1%})")
+        elif "lidar_not_used" in depth:
+            source = f"Depth Pro only, LiDAR not used: {depth['lidar_not_used']}"
+        else:
+            source = "Depth Pro"
+        median = info.get("depth_m", {}).get("median")
+        text = f"depth: {source}" + (f", median {median} m" if median is not None else "")
+        if info.get("atmospheric_light") == "sky":
+            return text + "; light: from its own sky"
+        average = info.get("average_light", {})
+        return (text + f"; light: no sky, average of the input images {average.get('value')} "
+                       f"({average.get('images_with_sky')} with sky)")
 
     def apply(self, image, rng, context, visibility, fp16, lidar):
         # Deterministic: no randomness involved, rng is not used. The same steps as

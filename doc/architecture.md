@@ -20,7 +20,7 @@ flowchart TB
     subgraph L1["入口层"]
         cli["cli.py<br/>degfw 命令"]
         main["__main__.py<br/>python -m"]
-        gui["gui/app.py<br/>（可选）"]
+        gui["gui/<br/>界面（可选）"]
         scripts["scripts/<br/>试验脚本"]
     end
 
@@ -91,7 +91,8 @@ flowchart TB
 | `degradation_fw/__init__.py` | core.base、core.context、core.params、core.pipeline、core.registry | 对外接口 |
 | `__main__.py` | cli | |
 | `cli.py` | core.registry、core.pipeline；用到时：core.weights、gui.app | |
-| `gui/app.py` | core.registry、core.io、core.params、core.pipeline | 需要 gradio |
+| `gui/app.py` | gui.logic、core.registry、core.base、core.io、core.params | 界面布局；需要 gradio |
+| `gui/logic.py` | core.registry、core.base、core.io、core.pipeline | 界面做的事（菜单、检查文件夹、预览、生成）；不需要 gradio |
 | `core/pipeline.py` | core.registry、core.io、core.context | |
 | `core/registry.py` | core.base；第一次查询时：degradations | |
 | `core/base.py` | core.params、core.context；用到时：core.weights | |
@@ -116,12 +117,14 @@ classDiagram
         <<abstract>>
         +name: str
         +label: str
+        +scope: str
         +params: dict
         +requires_modules: tuple
         +requires_weights: tuple
         +unavailable_reason() str
         +resolve_params(overrides) dict
         +apply(image, rng, context, params) ndarray
+        +describe(info) str
     }
     class Fog {
         «param» visibility: Int
@@ -213,6 +216,8 @@ classDiagram
 - `Degradation` 是抽象基类，子类实现 `apply()`，随机数只能用传入的 `rng`。
   `Degradation.__call__(image, rng, context, **params)` 先补默认值、校验参数（`resolve_params`），再调用子类的 `apply`，最后把结果限制在 `[0, 1]`；
   不给 `context` 时用一个空的，相当于内存里的一张图。
+- `scope` 是 `global`（作用在整张图上，如雾）或 `local`（作用在局部，如镜头上的雨滴），注册时检查；界面按它分菜单。
+  `describe(info)` 把退化在 `context.info` 里的记录写成一行给人看的说明（界面里每张图一行）。
 - `Context` 是像素以外的来源信息（[决策 0010](decisions/0010-context-one-fog-code.md)）：这张图的文件 `source`、这次运行的全部输入 `batch`、
   整次运行共用的 `shared`（每个步骤一个），以及退化写下的记录 `info`（记进 `.json`）。大多数退化不用它。
 - `Pipeline` 按步骤名从注册表取到退化（`registry.get`）；`registry` 保存所有已注册的子类。
@@ -380,7 +385,9 @@ data/input/                     outputs/run1/
 - 只重做一张图：`Pipeline.from_file("outputs/run1/pipeline.yaml").run_file(原图, 输出, seed=json 里的 seed)`。
   没有天空的雾图，要得到同样的结果，还要传入同一批图：`batch=`（这一批的全部输入），因为它的大气光是整批平均的。
 - 输入是单个文件时，`-o` 就是输出文件名（如 `out.png`），旁边生成 `out.json`，不生成 `pipeline.yaml`。
-- GUI 的单张图模式：结果和元数据显示在界面上，不自动存文件。脚本里用 `Pipeline.run(图)`，直接返回（结果图, 元数据）。
+- 界面的生成走的就是这条路（`gui/logic.py` 的 `generate` 调用 `Pipeline.run_folder`，种子 0），输出和 `degfw run` 完全相同。
+  界面的预览只显示一张图、不存文件：用同样的种子，并把整个输入文件夹当作这一批，所以和生成的那张逐像素相同。
+  脚本里用 `Pipeline.run(图)`，直接返回（结果图, 元数据）。
 
 ### 4.3 输出：`degfw fog`（雾的专门命令，用法同原版 `c2f.py`）
 

@@ -24,11 +24,19 @@ def test_registry_lists_degradations():
 def test_register_rejects_reserved_param_names():
     """apply(image, rng, context, **params): a parameter may not take one of these names."""
     for reserved in ("image", "rng", "context"):
-        cls = type("Bad", (Degradation,), {"name": f"bad_{reserved}", "label": "bad",
+        cls = type("Bad", (Degradation,), {"name": f"bad_{reserved}", "label": "bad", "scope": "global",
                                           "params": {reserved: Float()}})
         with pytest.raises(ValueError, match="reserved"):
             register(cls)
     assert not {"bad_image", "bad_rng", "bad_context"} & set(available())
+
+
+def test_register_rejects_a_missing_or_unknown_scope():
+    for scope in ("", "Global", "sensor"):
+        cls = type("Bad", (Degradation,), {"name": "bad_scope", "label": "bad", "scope": scope})
+        with pytest.raises(ValueError, match="scope must be one of"):
+            register(cls)
+    assert "bad_scope" not in available()
 
 
 def test_param_validation():
